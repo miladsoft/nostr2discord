@@ -167,6 +167,27 @@ async function checkRelayConnections() {
   return successfulConnections > 0;
 }
 
+// Remove optional chaining from any functions that might be used in Netlify functions
+// Safely insert an event into an array in sorted order without optional chaining
+function insertSorted(sortedArray, event, compare) {
+  let position = sortedArray.findIndex(e => compare(event, e) < 0);
+  
+  if (position === -1) {
+    position = sortedArray.length;
+  }
+  
+  // Check if there's an element at the position and if it has the same ID
+  if (position < sortedArray.length && sortedArray[position] && sortedArray[position].id === event.id) {
+    return sortedArray; // Event already exists
+  }
+  
+  return [
+    ...sortedArray.slice(0, position), 
+    event, 
+    ...sortedArray.slice(position)
+  ];
+}
+
 // Subscribe to Nostr events
 async function subscribeToNostrEvents() {
   if (!pubkey) {
@@ -295,7 +316,7 @@ async function testDirectFetch() {
 // Start the application
 console.log("Starting Nostr2Discord...");
 subscribeToNostrEvents().catch(error => {
-  console.error("Error during subscription:", error);
+  console.error("Error during subscription:", error && error.message ? error.message : 'Unknown error');
 });
 
 // Keep the process alive
@@ -304,4 +325,4 @@ setInterval(() => {
 }, checkIntervalMs);
 
 // Export for serverless functions
-module.exports = { subscribeToNostrEvents, sendToDiscord };
+module.exports = { subscribeToNostrEvents, sendToDiscord, insertSorted };
