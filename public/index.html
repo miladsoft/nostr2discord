@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nostr2Discord Bot</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+      color: #333;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .container {
+      background-color: #f9f9f9;
+      border-radius: 5px;
+      padding: 20px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #4a5568;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin: 20px 0;
+      text-align: center;
+    }
+    .active {
+      background-color: #c6f6d5;
+      color: #22543d;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Nostr2Discord Bot</h1>
+    <div class="status active">
+      <p><strong>Status:</strong> Active</p>
+    </div>
+    <p>This service forwards Nostr events to Discord channels via webhooks.</p>
+    <p>For configuration, use the webhook API with your secret key.</p>
+    
+    <h2>API Endpoints:</h2>
+    <ul>
+      <li><code>GET /api/webhook</code> - Check status</li>
+      <li><code>POST /api/webhook</code> - Update configuration (requires secret)</li>
+    </ul>
+  </div>
+</body>
+</html>
