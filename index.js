@@ -59,7 +59,9 @@ function logDebug(message) {
 // Format Nostr content for Discord
 function formatForDiscord(event) {
   let content = event.content;
-  const primalLink = `https://primal.net/e/${nip19.noteEncode(event.id)}`;
+  
+  // Get client links based on configuration
+  const viewerLinks = getViewerLinks(event.id);
   
   // Extract media URLs from content
   const mediaUrls = extractMediaUrls(content);
@@ -84,7 +86,7 @@ function formatForDiscord(event) {
   mediaUrls.slice(0, 9).forEach((url, index) => {
     if (isImageUrl(url)) {
       embeds.push({
-        url: primalLink,
+        url: viewerLinks.preferredLink,
         color: 3447003,
         image: {
           url: url
@@ -96,8 +98,8 @@ function formatForDiscord(event) {
     }
   });
 
-  // Add Primal link at the end of content
-  content = `${content}\n\n🔗 View on Primal: ${primalLink}`;
+  // Add view links at the end of content
+  content = `${content}\n\n${viewerLinks.linksText}`;
 
   return {
     content: content,
@@ -105,6 +107,42 @@ function formatForDiscord(event) {
     username: "Nostr Relay Bot",
     avatar_url: "https://nostr.com/img/nostr-logo.png"
   };
+}
+
+// Get viewer links based on configuration
+function getViewerLinks(eventId) {
+  const noteId = nip19.noteEncode(eventId);
+  
+  // Get preferred client from env var (primal, notes, njump, or all)
+  const preferredClient = process.env.PREFERRED_CLIENT || 'all';
+  
+  // Build links based on preference
+  const primalLink = `https://primal.net/e/${noteId}`;
+  const notesLink = `https://notes.blockcore.net/e/${eventId}`;
+  const njumpLink = `https://njump.me/${noteId}`;
+  
+  let linksText = '';
+  let preferredLink = '';
+  
+  if (preferredClient === 'primal') {
+    linksText = `🔗 View on Primal: ${primalLink}`;
+    preferredLink = primalLink;
+  } 
+  else if (preferredClient === 'notes') {
+    linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
+    preferredLink = notesLink;
+  }
+  else if (preferredClient === 'njump') {
+    linksText = `🔗 View on njump: ${njumpLink}`;
+    preferredLink = njumpLink;
+  }
+  else {
+    // Default to showing all
+    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [njump](${njumpLink})`;
+    preferredLink = primalLink;
+  }
+  
+  return { linksText, preferredLink };
 }
 
 // Helper function to extract media URLs from content
@@ -304,7 +342,12 @@ async function subscribeToNostrEvents() {
     receivedEventCount++;
     console.log(`📥 Received event ${receivedEventCount}: ${event.id}`);
     console.log(`📝 Content: ${event.content}`);
-    console.log(`🔗 Primal Link: https://primal.net/e/${nip19.noteEncode(event.id)}`);
+    
+    // Log links to different clients
+    const noteId = nip19.noteEncode(event.id);
+    console.log(`🔗 Primal Link: https://primal.net/e/${noteId}`);
+    console.log(`🔗 Notes Link: https://notes.blockcore.net/e/${event.id}`);
+    console.log(`🔗 njump Link: https://njump.me/${noteId}`);
     
     // Validate the event
     let isValid = true;

@@ -31,10 +31,19 @@ app.post('/.netlify/functions/webhook-simple', (req, res) => {
   const nostrPubkey = requestBody.nostrPubkey;
   const discordWebhook = requestBody.discordWebhook;
   const relays = requestBody.relays;
+  const preferredClient = requestBody.preferredClient;
   
   // Validate required params
   if (!nostrPubkey || !discordWebhook) {
     return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  
+  // Validate preferredClient
+  if (preferredClient && !["primal", "notes", "njump", "all"].includes(preferredClient)) {
+    return res.status(400).json({ 
+      error: 'Invalid preferredClient value', 
+      message: 'Must be one of: primal, notes, njump, all' 
+    });
   }
   
   // Since we can't dynamically update the running bot from a serverless function,
@@ -46,7 +55,8 @@ app.post('/.netlify/functions/webhook-simple', (req, res) => {
       config: {
         pubkey: nostrPubkey,
         webhook: discordWebhook,
-        relays: relays ? relays.split(',') : []
+        relays: relays ? relays.split(',') : [],
+        preferredClient: preferredClient || 'all'
       }
     });
   } catch (error) {

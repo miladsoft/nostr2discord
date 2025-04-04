@@ -34,6 +34,33 @@
       background-color: #c6f6d5;
       color: #22543d;
     }
+    .api-endpoint {
+      margin: 20px 0;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #fff;
+    }
+    .method {
+      font-weight: bold;
+      margin-right: 10px;
+    }
+    .post {
+      color: #d73a49;
+    }
+    .url {
+      font-family: monospace;
+      color: #0366d6;
+    }
+    .copy-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #0366d6;
+    }
+    .copy-btn i {
+      font-size: 1.2em;
+    }
   </style>
 </head>
 <body>
@@ -50,6 +77,32 @@
       <li><code>GET /api/webhook-simple</code> - Check status</li>
       <li><code>POST /api/webhook-simple</code> - Update configuration (requires secret)</li>
     </ul>
+    <div class="api-endpoint">
+      <span class="method post">POST</span>
+      <span class="url">/api/webhook-simple</span>
+      <button class="copy-btn" onclick="copyToClipboard('/api/webhook-simple')">
+        <i class="bi bi-clipboard"></i>
+      </button>
+      <p>Configure the bot with your Nostr public key and Discord webhook</p>
+      <details>
+        <summary>Example Request</summary>
+        <pre><code>{
+  "nostrPubkey": "your_npub_or_hex_key",
+  "discordWebhook": "https://discord.com/api/webhooks/...",
+  "relays": "wss://relay1.com,wss://relay2.com",
+  "preferredClient": "both"
+}</code></pre>
+      </details>
+      <details>
+        <summary>Example Request</summary>
+        <pre><code>{
+  "nostrPubkey": "your_npub_or_hex_key",
+  "discordWebhook": "https://discord.com/api/webhooks/...",
+  "relays": "wss://relay1.com,wss://relay2.com",
+  "preferredClient": "all"
+}</code></pre>
+      </details>
+    </div>
   </div>
   <script>
     const relayUrls = [
