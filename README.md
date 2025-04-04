@@ -5,9 +5,11 @@ This bot forwards text posts (kind 1 events) from a Nostr account to a Discord c
 ## Features
 
 - Monitors a specified Nostr public key for new posts
-- Forwards posts to Discord via webhook
+- Forwards posts to Discord via webhook as beautiful embeds
+- Posts are sent exactly as they appear in Nostr, with no content modifications
 - Supports multiple Nostr relays for reliable delivery
-- Displays post content with embedded media
+- Discord automatically renders any media links in the posts
+- Uses the Nostr user's profile picture and name for Discord messages
 - Provides links to view posts on Nostr clients (Primal, Blockcore Notes, njump)
 - Configurable display options
 
@@ -21,6 +23,15 @@ In your `.env` file:
 PREFERRED_CLIENT=all
 ```
 
+## Message Format
+
+Posts are sent as Discord embeds:
+- Original post content is preserved in the embed description
+- Discord automatically renders any media links in the embed
+- Nostr client links are added in the embed fields
+- Messages appear with the Nostr user's profile picture and name
+- Timestamp is included in the embed
+
 ## Nostr Clients
 
 The bot can generate links to different Nostr web clients:
@@ -33,5 +44,6 @@ The bot can generate links to different Nostr web clients:
 
 1. Create a Discord webhook in your server's channel settings
 2. Set your Nostr public key in the `.env` file (hex or npub format)
-3. Run the bot with `npm start`
+3. Configure any display preferences in the `.env` file
+4. Run the bot with `npm start`
 

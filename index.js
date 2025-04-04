@@ -49,6 +49,9 @@ const pool = new SimplePool({ eoseSubTimeout: 10000 }); // Increase EOSE timeout
 // Store for processed events to prevent duplicates
 const processedEvents = new Set();
 
+// Store user metadata including profile picture
+let userMetadata = null;
+
 // Debug logging function
 function logDebug(message) {
   if (debug) {
@@ -56,57 +59,88 @@ function logDebug(message) {
   }
 }
 
+// Fetch user profile metadata from Nostr
+async function fetchUserMetadata() {
+  if (!pubkey) return null;
+  
+  console.log(`🔍 Fetching profile metadata for pubkey: ${pubkey}`);
+  
+  try {
+    // Create a subscription for kind 0 (metadata) events
+    const metadataSub = pool.sub(relayUrls, [{
+      kinds: [0],
+      authors: [pubkey],
+    }]);
+    
+    return new Promise((resolve) => {
+      let timeout = setTimeout(() => {
+        console.log("⏱️ Metadata fetch timed out, using default avatar");
+        metadataSub.unsub();
+        resolve(null);
+      }, 10000);
+      
+      metadataSub.on('event', event => {
+        try {
+          clearTimeout(timeout);
+          const metadata = JSON.parse(event.content);
+          console.log("✅ Found user metadata:", metadata?.name || "unnamed user");
+          metadataSub.unsub();
+          resolve(metadata);
+        } catch (e) {
+          console.error("❌ Error parsing user metadata:", e);
+          resolve(null);
+        }
+      });
+      
+      metadataSub.on('eose', () => {
+        // Keep waiting for a bit in case metadata comes in late
+      });
+    });
+  } catch (error) {
+    console.error("❌ Error fetching user metadata:", error);
+    return null;
+  }
+}
+
 // Format Nostr content for Discord
 function formatForDiscord(event) {
+  // Use the original content without modifications
   let content = event.content;
   
   // Get client links based on configuration
   const viewerLinks = getViewerLinks(event.id);
   
-  // Extract media URLs from content
-  const mediaUrls = extractMediaUrls(content);
-  // Clean content from media URLs to avoid duplication
-  content = cleanContentFromMediaUrls(content, mediaUrls);
-
-  // Create main message embed
-  const mainEmbed = {
-    title: "New Nostr Post",
-    description: content || "No text content",
-    color: 3447003,
-    timestamp: new Date(event.created_at * 1000).toISOString(),
+  // Format as embed message
+  const timestamp = new Date(event.created_at * 1000).toISOString();
+  
+  // Get the username and avatar from metadata if available
+  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
+  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
+  
+  // Create Discord embed
+  const embed = {
+    description: content,
+    color: 3447003, // Blue color
+    timestamp: timestamp,
     footer: {
-      text: `Event ID: ${event.id}`
-    }
+      text: `View post in Nostr clients`
+    },
+    fields: [
+      {
+        name: "Links",
+        value: viewerLinks.linksText
+      }
+    ]
   };
-
-  // Initialize embeds array with main embed
-  const embeds = [mainEmbed];
-
-  // Add media embeds (up to 10 total embeds allowed by Discord)
-  mediaUrls.slice(0, 9).forEach((url, index) => {
-    if (isImageUrl(url)) {
-      embeds.push({
-        url: viewerLinks.preferredLink,
-        color: 3447003,
-        image: {
-          url: url
-        }
-      });
-    } else if (isVideoUrl(url)) {
-      // For videos, we add them as links since webhook can't embed videos directly
-      content = `${content}\n\n📺 Video: ${url}`;
-    }
-  });
-
-  // Add view links at the end of content
-  content = `${content}\n\n${viewerLinks.linksText}`;
-
-  return {
-    content: content,
-    embeds: embeds,
-    username: "Nostr Relay Bot",
-    avatar_url: "https://nostr.com/img/nostr-logo.png"
+  
+  // Send original content as embed
+  const message = {
+    username: username,
+    avatar_url: avatarUrl,
+    embeds: [embed]
   };
+  
+  return message;
 }
 
 // Get viewer links based on configuration
@@ -143,46 +177,6 @@ function getViewerLinks(eventId) {
   }
   
   return { linksText, preferredLink };
-}
-
-// Helper function to extract media URLs from content
-function extractMediaUrls(content) {
-  const mediaUrls = [];
-  
-  // Regular expressions for media URLs (including common image hosting services)
-  const urlRegex = /(https?:\/\/[^\s<>"]+?\.(?:jpg|jpeg|gif|png|mp4|webm|mov|webp)(?:\?[^\s<>"]*)?)|(?:https?:\/\/(?:i\.)?imgur\.com\/[a-zA-Z0-9]+(?:\.(?:jpg|jpeg|gif|png|mp4|webm|mov|webp))?)/gi;
-  
-  // Find all media URLs
-  let match;
-  while ((match = urlRegex.exec(content)) !== null) {
-    let url = match[0];
-    // Handle imgur URLs without extensions
-    if (url.includes('imgur.com') && !url.match(/\.(jpg|jpeg|gif|png|mp4|webm|mov|webp)$/i)) {
-      url += '.jpg';
-    }
-    mediaUrls.push(url);
-  }
-  
-  return mediaUrls;
-}
-
-// Helper function to clean content from media URLs
-function cleanContentFromMediaUrls(content, mediaUrls) {
-  let cleanContent = content;
-  mediaUrls.forEach(url => {
-    cleanContent = cleanContent.replace(url, '').trim();
-  });
-  return cleanContent.replace(/\n\s*\n\s*\n/g, '\n\n'); // Remove extra newlines
-}
-
-// Helper function to check if URL is an image
-function isImageUrl(url) {
-  return /\.(jpg|jpeg|gif|png|webp)(\?.*)?$/i.test(url);
-}
-
-// Helper function to check if URL is a video
-function isVideoUrl(url) {
-  return /\.(mp4|webm|mov)(\?.*)?$/i.test(url);
 }
 
 // Send event to Discord webhook
@@ -319,6 +313,9 @@ async function subscribeToNostrEvents() {
     setTimeout(subscribeToNostrEvents, 30000);
     return;
   }
+  
+  // Fetch user metadata for profile picture and name
+  userMetadata = await fetchUserMetadata();
   
   logDebug("Setting up subscription filter");
   
