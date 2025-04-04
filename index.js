@@ -3,8 +3,24 @@ require('websocket-polyfill');
 const { relayInit, nip19, SimplePool, getEventHash, validateEvent, verifySignature } = require('nostr-tools');
 const fetch = require('node-fetch');
 
+// Default relays
+const DEFAULT_RELAYS = [
+  'wss://relay.nostr.band',
+  'wss://relay.damus.io',
+  'wss://eden.nostr.land',
+  'wss://nos.lol',
+  'wss://relay.snort.social',
+  'wss://relay.current.fyi',
+  'wss://brb.io',
+  'wss://nostr.orangepill.dev',
+  'wss://nostr-pub.wellorder.net',
+  'wss://nostr.wine',
+  'wss://nostr.bitcoiner.social',
+  'wss://relay.primal.net'
+].join(',');
+
 // Configuration from environment variables
-const relayUrls = (process.env.NOSTR_RELAYS || 'wss://relay.damus.io,wss://relay.nostr.info').split(',');
+const relayUrls = (process.env.NOSTR_RELAYS || DEFAULT_RELAYS).split(',');
 let pubkey = process.env.NOSTR_PUBKEY;
 const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
 const checkIntervalMs = parseInt(process.env.CHECK_INTERVAL_MS || '30000');
@@ -42,38 +58,93 @@ function logDebug(message) {
 
 // Format Nostr content for Discord
 function formatForDiscord(event) {
-  // Convert mentions, links, etc.
   let content = event.content;
+  const primalLink = `https://primal.net/e/${nip19.noteEncode(event.id)}`;
   
-  // Handle mentions (NIP-08/NIP-27)
-  content = content.replace(/nostr:npub[a-z0-9]+/g, match => {
-    try {
-      const decoded = nip19.decode(match.slice(6));
-      return `*@${decoded.data.slice(0, 8)}*`;
-    } catch (e) {
-      return match;
+  // Extract media URLs from content
+  const mediaUrls = extractMediaUrls(content);
+  // Clean content from media URLs to avoid duplication
+  content = cleanContentFromMediaUrls(content, mediaUrls);
+
+  // Create main message embed
+  const mainEmbed = {
+    title: "New Nostr Post",
+    description: content || "No text content",
+    color: 3447003,
+    timestamp: new Date(event.created_at * 1000).toISOString(),
+    footer: {
+      text: `Event ID: ${event.id}`
+    }
+  };
+
+  // Initialize embeds array with main embed
+  const embeds = [mainEmbed];
+
+  // Add media embeds (up to 10 total embeds allowed by Discord)
+  mediaUrls.slice(0, 9).forEach((url, index) => {
+    if (isImageUrl(url)) {
+      embeds.push({
+        url: primalLink,
+        color: 3447003,
+        image: {
+          url: url
+        }
+      });
+    } else if (isVideoUrl(url)) {
+      // For videos, we add them as links since webhook can't embed videos directly
+      content = `${content}\n\n📺 Video: ${url}`;
     }
   });
-  
-  // Format the message for Discord
-  const timestamp = new Date(event.created_at * 1000).toISOString();
-  
+
+  // Add Primal link at the end of content
+  content = `${content}\n\n🔗 View on Primal: ${primalLink}`;
+
   return {
-    content: null,
-    embeds: [
-      {
-        title: "New Nostr Post",
-        description: content,
-        color: 3447003, // Blue color
-        footer: {
-          text: `Event ID: ${event.id.slice(0, 8)}...`
-        },
-        timestamp: timestamp
-      }
-    ],
-    username: `Nostr Relay Bot`,
-    avatar_url: "https://nostr.com/img/nostr-logo.png" // Replace with actual Nostr logo if available
+    content: content,
+    embeds: embeds,
+    username: "Nostr Relay Bot",
+    avatar_url: "https://nostr.com/img/nostr-logo.png"
   };
+}
+
+// Helper function to extract media URLs from content
+function extractMediaUrls(content) {
+  const mediaUrls = [];
+  
+  // Regular expressions for media URLs (including common image hosting services)
+  const urlRegex = /(https?:\/\/[^\s<>"]+?\.(?:jpg|jpeg|gif|png|mp4|webm|mov|webp)(?:\?[^\s<>"]*)?)|(?:https?:\/\/(?:i\.)?imgur\.com\/[a-zA-Z0-9]+(?:\.(?:jpg|jpeg|gif|png|mp4|webm|mov|webp))?)/gi;
+  
+  // Find all media URLs
+  let match;
+  while ((match = urlRegex.exec(content)) !== null) {
+    let url = match[0];
+    // Handle imgur URLs without extensions
+    if (url.includes('imgur.com') && !url.match(/\.(jpg|jpeg|gif|png|mp4|webm|mov|webp)$/i)) {
+      url += '.jpg';
+    }
+    mediaUrls.push(url);
+  }
+  
+  return mediaUrls;
+}
+
+// Helper function to clean content from media URLs
+function cleanContentFromMediaUrls(content, mediaUrls) {
+  let cleanContent = content;
+  mediaUrls.forEach(url => {
+    cleanContent = cleanContent.replace(url, '').trim();
+  });
+  return cleanContent.replace(/\n\s*\n\s*\n/g, '\n\n'); // Remove extra newlines
+}
+
+// Helper function to check if URL is an image
+function isImageUrl(url) {
+  return /\.(jpg|jpeg|gif|png|webp)(\?.*)?$/i.test(url);
+}
+
+// Helper function to check if URL is a video
+function isVideoUrl(url) {
+  return /\.(mp4|webm|mov)(\?.*)?$/i.test(url);
 }
 
 // Send event to Discord webhook
@@ -218,22 +289,22 @@ async function subscribeToNostrEvents() {
   const filter = {
     authors: [pubkey],
     kinds: [1],
-    limit: 20
+    since: Math.floor(Date.now() / 1000) // Only get events from now
   };
   
   logDebug(`Subscription filter: ${JSON.stringify(filter)}`);
   
   const sub = pool.sub(relayUrls, [filter]);
   
-  console.log("Waiting for events...");
+  console.log("Waiting for new events...");
   
   let receivedEventCount = 0;
   
   sub.on('event', event => {
     receivedEventCount++;
-    console.log(`📥 Received event ${receivedEventCount}: ${event.id.slice(0, 8)}... (created: ${new Date(event.created_at * 1000).toLocaleString()})`);
-    logDebug(`Full event: ${JSON.stringify(event)}`);
-    console.log(`📝 Content: ${event.content.substring(0, 100)}${event.content.length > 100 ? '...' : ''}`);
+    console.log(`📥 Received event ${receivedEventCount}: ${event.id}`);
+    console.log(`📝 Content: ${event.content}`);
+    console.log(`🔗 Primal Link: https://primal.net/e/${nip19.noteEncode(event.id)}`);
     
     // Validate the event
     let isValid = true;

@@ -3,6 +3,21 @@ require('websocket-polyfill');
 const { nip19, relayInit } = require('nostr-tools');
 const { sendToDiscord } = require('./index');
 
+const DEFAULT_RELAYS = [
+  'wss://relay.nostr.band',
+  'wss://relay.damus.io',
+  'wss://eden.nostr.land',
+  'wss://nos.lol',
+  'wss://relay.snort.social',
+  'wss://relay.current.fyi',
+  'wss://brb.io',
+  'wss://nostr.orangepill.dev',
+  'wss://nostr-pub.wellorder.net',
+  'wss://nostr.wine',
+  'wss://nostr.bitcoiner.social',
+  'wss://relay.primal.net'
+].join(',');
+
 // Helper function to test a single relay connection
 async function testRelay(url) {
   return new Promise((resolve) => {
@@ -45,7 +60,7 @@ async function runTests() {
   // Check environment variables
   const pubkey = process.env.NOSTR_PUBKEY;
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  const relays = process.env.NOSTR_RELAYS;
+  const relays = process.env.NOSTR_RELAYS || DEFAULT_RELAYS;
 
   console.log("Environment check:");
   console.log(`- NOSTR_PUBKEY: ${pubkey ? '✅ Set' : '❌ Not set'}`);
