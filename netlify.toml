@@ -6,6 +6,7 @@
 [functions]
   node_bundler = "esbuild"
   included_files = ["*.js"]
+  external_node_modules = ["websocket-polyfill", "nostr-tools", "node-fetch"]
 
 [[redirects]]
   from = "/api/*"
