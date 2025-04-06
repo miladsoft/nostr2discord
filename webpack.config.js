@@ -1,7 +1,19 @@
+const path = require('path');
 const nodeExternals = require('webpack-node-externals');
 
 module.exports = {
+  target: 'node',
+  mode: 'production',
+  entry: {
+    'webhook-simple': './functions/webhook-simple.js',
+    'webhook': './functions/webhook.js'
+  },
   externals: [nodeExternals()],
+  output: {
+    path: path.resolve(__dirname, 'functions-build'),
+    filename: '[name].js',
+    libraryTarget: 'commonjs2'
+  },
   module: {
     rules: [
       {
@@ -10,22 +22,13 @@ module.exports = {
         use: {
           loader: 'babel-loader',
           options: {
-            presets: [
-              [
-                '@babel/preset-env',
-                {
-                  targets: {
-                    node: '12'
-                  }
-                }
-              ]
-            ],
-            plugins: [
-              '@babel/plugin-proposal-optional-chaining'
-            ]
+            presets: ['@babel/preset-env']
           }
         }
       }
     ]
+  },
+  resolve: {
+    extensions: ['.js']
   }
 };

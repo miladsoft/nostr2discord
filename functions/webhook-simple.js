@@ -1,15 +1,13 @@
 require('dotenv').config();
-require('websocket-polyfill');
-const { SimplePool, nip19, getEventHash, validateEvent, verifySignature } = require('nostr-tools');
+const { SimplePool, nip19, validateEvent, verifySignature } = require('nostr-tools');
 const fetch = require('node-fetch');
 
-// Configuration
+// Configuration (gets updated per request)
 let config = {
   relayUrls: (process.env.NOSTR_RELAYS || 'wss://relay.nostr.band,wss://relay.damus.io').split(','),
   pubkey: process.env.NOSTR_PUBKEY || '',
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
   preferredClient: process.env.PREFERRED_CLIENT || 'all',
-  debug: process.env.DEBUG === 'true',
   processedEvents: new Set()
 };
 
@@ -74,11 +72,11 @@ function formatForDiscord(event, userMetadata) {
     color: 3447003,
     timestamp: timestamp,
     footer: {
-      text: `View post in Nostr clients`
+      text: `Nostr Event`
     },
     fields: [
       {
-        name: "Links",
+        name: "View in clients",
         value: viewerLinks.linksText
       }
     ]
@@ -130,7 +128,7 @@ async function fetchUserMetadata(pubkey) {
   if (!pubkey) return null;
   
   try {
-    const pool = new SimplePool({ eoseSubTimeout: 5000 });
+    const pool = new SimplePool({ eoseSubTimeout: 3000 });
     
     // Create a subscription for kind 0 (metadata) events
     const metadataSub = pool.sub(config.relayUrls, [{
@@ -143,7 +141,7 @@ async function fetchUserMetadata(pubkey) {
       let timeout = setTimeout(() => {
         metadataSub.unsub();
         resolve(null);
-      }, 5000);
+      }, 3000);
       
       metadataSub.on('event', event => {
         try {
@@ -244,7 +242,8 @@ exports.handler = async function(event, context) {
         config: {
           pubkey: config.pubkey ? (config.pubkey.slice(0, 8) + '...' + config.pubkey.slice(-8)) : 'Not set',
           relays: config.relayUrls,
-          preferredClient: config.preferredClient
+          preferredClient: config.preferredClient,
+          discordWebhook: config.discordWebhookUrl ? 'Configured' : 'Not set'
         }
       })
     };
@@ -254,6 +253,7 @@ exports.handler = async function(event, context) {
   if (event.httpMethod === 'POST') {
     try {
       const payload = JSON.parse(event.body);
+      console.log("Received payload:", JSON.stringify(payload));
       
       // If payload contains a Nostr event
       if (payload.id && payload.pubkey && payload.sig) {
