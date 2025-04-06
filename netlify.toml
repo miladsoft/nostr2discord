@@ -18,6 +18,10 @@
   to = "/index.html"
   status = 200
 
+# Schedule the poller to run every 5 minutes
+[functions."scheduled-poller"]
+  schedule = "*/5 * * * *"
+
 [dev]
   command = "npm run dev"
   port = 8888

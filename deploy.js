@@ -8,7 +8,7 @@ if (!fs.existsSync(functionsDir)) {
 }
 
 // Copy the functions
-const functionFiles = ['webhook.js', 'webhook-simple.js'];
+const functionFiles = ['webhook.js', 'webhook-simple.js', 'scheduled-poller.js'];
 
 functionFiles.forEach(file => {
   const sourceFile = path.join(__dirname, 'functions', file);
@@ -55,8 +55,15 @@ const testFileContent = `
     <pre id="test-result"></pre>
   </div>
   
+  <div class="card">
+    <h2>Manual Poll</h2>
+    <button onclick="manualPoll()">Trigger Manual Poll</button>
+    <pre id="poll-result"></pre>
+  </div>
+  
   <script>
     const API_URL = '/api/webhook-simple';
+    const POLL_URL = '/api/scheduled-poller';
     
     async function checkStatus() {
       const resultElement = document.getElementById('status-result');
@@ -96,6 +103,29 @@ const testFileContent = `
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(testEvent)
+        });
+        
+        const data = await response.json();
+        
+        resultElement.innerHTML = JSON.stringify(data, null, 2);
+        resultElement.className = response.ok ? 'success' : 'error';
+      } catch (error) {
+        resultElement.innerHTML = 'Error: ' + error.message;
+        resultElement.className = 'error';
+      }
+    }
+    
+    async function manualPoll() {
+      const resultElement = document.getElementById('poll-result');
+      resultElement.innerHTML = 'Triggering poll...';
+      
+      try {
+        const response = await fetch(POLL_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ trigger: 'manual' })
         });
         
         const data = await response.json();
