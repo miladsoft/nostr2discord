@@ -215,17 +215,9 @@ function formatForDiscord(event, userMetadata, originalEvent = null, originalAut
 // Test the Discord webhook connection
 async function testDiscordWebhook() {
   try {
-    if (!config.discordWebhookUrl) {
-      return { success: false, error: 'No Discord webhook URL configured' };
-    }
-    
-    console.log(`Webhook test requested, but test messages are disabled`);
-    
-    // Return success without actually sending any Discord messages
-    return { 
-      success: true, 
-      message: 'Discord webhook validation completed without sending test messages'
-    };
+    // Do not send any test messages to Discord
+    console.log(`Webhook test requested, but all test messages are permanently disabled`);
+    return { message: "Test messages are disabled for this webhook", disabled: true };
   } catch (error) {
     console.error(`❌ Exception during webhook validation:`, error);
     return { success: false, error: error.message || 'Unknown error' };
