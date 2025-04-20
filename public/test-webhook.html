@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nostr2Discord Webhook Tester</title>
+  <title>Nostr2Discord Webhook Validator</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -12,244 +12,98 @@
       padding: 20px;
       line-height: 1.6;
     }
+    .container {
+      background-color: #f7f7f7;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
     h1 {
-      color: #4a69bd;
-      border-bottom: 2px solid #ddd;
+      color: #333;
+      border-bottom: 2px solid #eee;
       padding-bottom: 10px;
     }
-    .card {
-      margin: 20px 0;
-      padding: 15px;
-      background: #f8f9fa;
-      border-radius: 5px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    .button {
-      background-color: #4a69bd;
+    button {
+      background-color: #4b70e2;
       color: white;
       border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
+      padding: 10px 15px;
+      border-radius: 5px;
       cursor: pointer;
       font-size: 14px;
-      transition: background-color 0.3s;
     }
-    .button:hover {
-      background-color: #3b5998;
+    button:hover {
+      background-color: #3a5bbf;
     }
-    .result {
-      margin-top: 10px;
-      padding: 10px;
+    .info-box {
+      background-color: #e7f3fe;
+      border-left: 4px solid #2196F3;
+      padding: 12px;
+      margin: 15px 0;
+    }
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 5px;
+      min-height: 100px;
       background-color: #f0f0f0;
-      border-radius: 4px;
       white-space: pre-wrap;
-      max-height: 300px;
-      overflow: auto;
     }
     .success {
-      color: #28a745;
-      font-weight: bold;
+      color: green;
     }
     .error {
-      color: #dc3545;
-      font-weight: bold;
-    }
-    textarea {
-      width: 100%;
-      padding: 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-family: monospace;
-    }
-    label {
-      display: block;
-      margin-top: 10px;
-      font-weight: bold;
-    }
-    input[type="text"] {
-      width: 100%;
-      padding: 8px;
-      margin-bottom: 10px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-    .status-indicator {
-      display: inline-block;
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      margin-right: 5px;
-    }
-    .status-active {
-      background-color: #28a745;
-    }
-    .status-inactive {
-      background-color: #dc3545;
+      color: red;
     }
   </style>
 </head>
 <body>
-  <h1>Nostr2Discord Webhook Tester</h1>
-  
-  <div class="card">
-    <h2>Status</h2>
+  <div class="container">
+    <h1>Nostr2Discord Webhook Validator</h1>
+    <div class="info-box">
+      <strong>Important:</strong> No test messages will be sent to Discord. This tool only validates your webhook configuration.
+    </div>
+    
     <div>
-      <span class="status-indicator" id="status-indicator"></span>
-      <span id="status-text">Checking webhook status...</span>
+      <button id="validateWebhook">Validate Webhook URL</button>
+      <button id="checkConfig">Check Configuration</button>
     </div>
-    <button class="button" onclick="checkStatus()">Refresh Status</button>
-    <div class="result" id="status-result"></div>
-  </div>
-  
-  <div class="card">
-    <h2>Test Discord Webhook</h2>
-    <label for="webhook-url">Discord Webhook URL (leave empty to use configured value):</label>
-    <input type="text" id="webhook-url" placeholder="https://discord.com/api/webhooks/...">
     
-    <label for="test-message">Custom Message (optional):</label>
-    <textarea id="test-message" rows="2" placeholder="This is a test message from the Nostr2Discord debug tool"></textarea>
-    
-    <div style="margin-top: 15px;">
-      <button class="button" onclick="testWebhook()">Send Test Message</button>
-    </div>
-    <div class="result" id="test-result"></div>
+    <div id="result">Results will appear here...</div>
   </div>
-  
-  <div class="card">
-    <h2>Test Manual Post</h2>
-    <p>This will send a test Nostr post to Discord via the webhook.</p>
-    <button class="button" onclick="testManualPost()">Test Manual Post</button>
-    <div class="result" id="manual-result"></div>
-  </div>
-  
-  <div class="card">
-    <h2>Configuration</h2>
-    <button class="button" onclick="checkConfiguration()">View Configuration</button>
-    <div class="result" id="config-result"></div>
-  </div>
-  
+
   <script>
-    // Check webhook status
-    async function checkStatus() {
-      document.getElementById('status-indicator').className = 'status-indicator';
-      document.getElementById('status-text').innerText = 'Checking...';
-      document.getElementById('status-result').innerText = 'Loading...';
+    document.getElementById('validateWebhook').addEventListener('click', async () => {
+      const resultDiv = document.getElementById('result');
+      resultDiv.textContent = 'Validating webhook URL...';
       
       try {
-        const response = await fetch('/.netlify/functions/webhook-simple');
-        const data = await response.json();
-        
-        document.getElementById('status-result').innerText = JSON.stringify(data, null, 2);
-        
-        if (data.status === 'active') {
-          document.getElementById('status-indicator').className = 'status-indicator status-active';
-          document.getElementById('status-text').innerText = 'Webhook is active';
-        } else {
-          document.getElementById('status-indicator').className = 'status-indicator status-inactive';
-          document.getElementById('status-text').innerText = 'Webhook status unknown';
-        }
-      } catch (error) {
-        document.getElementById('status-indicator').className = 'status-indicator status-inactive';
-        document.getElementById('status-text').innerText = 'Error checking webhook';
-        document.getElementById('status-result').innerText = `Error: ${error.message}`;
-      }
-    }
-    
-    // Test Discord webhook
-    async function testWebhook() {
-      const resultElement = document.getElementById('test-result');
-      resultElement.innerText = 'Sending test message...';
-      
-      try {
-        const webhookUrl = document.getElementById('webhook-url').value.trim();
-        const customMessage = document.getElementById('test-message').value.trim();
-        
-        const response = await fetch('/.netlify/functions/debug-webhook', {
-          method: 'POST',
+        const response = await fetch('/.netlify/functions/webhook-simple?action=test', {
+          method: 'GET',
           headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            action: 'test_discord',
-            webhookUrl: webhookUrl || undefined,
-            message: customMessage || undefined
-          })
+            'Content-Type': 'application/json',
+          }
         });
         
         const data = await response.json();
-        resultElement.innerText = JSON.stringify(data, null, 2);
-        
-        if (data.success) {
-          resultElement.innerHTML = '<span class="success">✅ Test message sent successfully!</span>\n\n' + 
-            JSON.stringify(data, null, 2);
-        } else {
-          resultElement.innerHTML = '<span class="error">❌ Failed to send test message!</span>\n\n' + 
-            JSON.stringify(data, null, 2);
-        }
+        resultDiv.innerHTML = '<span class="success">✓ Validation completed</span>\n\n' + 
+                              JSON.stringify(data, null, 2);
       } catch (error) {
-        resultElement.innerHTML = `<span class="error">❌ Error:</span> ${error.message}`;
+        resultDiv.innerHTML = '<span class="error">✗ Validation failed!</span>\n\n' + error.message;
       }
-    }
+    });
     
-    // Test manual post
-    async function testManualPost() {
-      const resultElement = document.getElementById('manual-result');
-      resultElement.innerText = 'Sending test post...';
+    document.getElementById('checkConfig').addEventListener('click', async () => {
+      const resultDiv = document.getElementById('result');
+      resultDiv.textContent = 'Checking configuration...';
       
       try {
-        // Create a test Nostr event
-        const testEvent = {
-          id: "5c83da77af1dec069c6b1ee166539582b875c3f85215fdd3f3be889322013014", // This is a fake ID
-          pubkey: "97c70a44366a6535c145b333f973ea86dfdc2d7a99da618c40c64705ad98e322", // This is a fake pubkey
-          created_at: Math.floor(Date.now() / 1000),
-          kind: 1,
-          tags: [],
-          content: `This is a test post from the Nostr2Discord debug page. Time: ${new Date().toLocaleString()}`,
-          sig: "78ee9bae33a3f3b0aae9e133521af43a337eecd8a88edba3f821a3ef9751ea3061a75827f0f7428155ba20fe524d93e1b1369b6c094c9caa93311e45e42ee967" // Fake signature
-        };
-        
-        const response = await fetch('/.netlify/functions/webhook-simple', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(testEvent)
-        });
-        
+        const response = await fetch('/.netlify/functions/debug-webhook?action=check_config');
         const data = await response.json();
-        
-        if (response.ok) {
-          resultElement.innerHTML = '<span class="success">✅ Test post sent successfully!</span>\n\n' +
-            JSON.stringify(data, null, 2);
-        } else {
-          resultElement.innerHTML = '<span class="error">❌ Failed to send test post!</span>\n\n' +
-            JSON.stringify(data, null, 2);
-        }
+        resultDiv.innerHTML = 'Configuration:\n\n' + JSON.stringify(data, null, 2);
       } catch (error) {
-        resultElement.innerHTML = `<span class="error">❌ Error:</span> ${error.message}`;
+        resultDiv.innerHTML = '<span class="error">✗ Error checking configuration!</span>\n\n' + error.message;
       }
-    }
-    
-    // Check configuration
-    async function checkConfiguration() {
-      const resultElement = document.getElementById('config-result');
-      resultElement.innerText = 'Fetching configuration...';
-      
-      try {
-        const response = await fetch('/.netlify/functions/debug-webhook?action=check_config', {
-          method: 'GET'
-        });
-        
-        const data = await response.json();
-        resultElement.innerText = JSON.stringify(data, null, 2);
-      } catch (error) {
-        resultElement.innerHTML = `<span class="error">❌ Error:</span> ${error.message}`;
-      }
-    }
-    
-    // Check status on page load
-    window.addEventListener('DOMContentLoaded', () => {
-      checkStatus();
     });
   </script>
 </body>

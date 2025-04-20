@@ -436,34 +436,6 @@ async function pollForEvents() {
         continue;
       }
       
-      // Test Discord webhook before sending
-      try {
-        const testResponse = await fetch(config.discordWebhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            content: `Testing webhook connectivity before sending events (${new Date().toISOString()})`
-          }),
-        });
-        
-        if (!testResponse.ok) {
-          console.error(`Discord webhook test failed: ${testResponse.status} ${testResponse.statusText}`);
-          const errorText = await testResponse.text();
-          console.error(`Response: ${errorText}`);
-          return {
-            error: `Discord webhook test failed: ${testResponse.status} ${testResponse.statusText}`,
-            details: errorText
-          };
-        } else {
-          console.log("Discord webhook test successful");
-        }
-      } catch (testError) {
-        console.error("Error testing Discord webhook:", testError);
-        return { error: `Discord webhook test error: ${testError.message}` };
-      }
-      
       // Send to Discord
       const result = await sendToDiscord(event, userMetadata, config.discordWebhookUrl);
       

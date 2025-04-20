@@ -211,19 +211,6 @@ function formatForDiscord(event, userMetadata, originalEvent = null, originalAut
   
   return message;
 }
-
-// Test the Discord webhook connection
-async function testDiscordWebhook() {
-  try {
-    // Do not send any test messages to Discord
-    console.log(`Webhook test requested, but all test messages are permanently disabled`);
-    return { message: "Test messages are disabled for this webhook", disabled: true };
-  } catch (error) {
-    console.error(`❌ Exception during webhook validation:`, error);
-    return { success: false, error: error.message || 'Unknown error' };
-  }
-}
-
 // Improved send to Discord with better error handling
 async function sendToDiscord(event, userMetadata, originalEvent = null, originalAuthorMetadata = null) {
   try {

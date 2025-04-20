@@ -94,7 +94,7 @@ exports.handler = async function(event, context) {
   };
 };
 
-// Test Discord webhook connection
+// Test Discord webhook connection without sending messages
 async function testDiscordWebhook(headers, webhookUrl, customMessage) {
   if (!webhookUrl) {
     return {
@@ -107,56 +107,32 @@ async function testDiscordWebhook(headers, webhookUrl, customMessage) {
   }
   
   try {
-    // Create a simple test message
-    const testMessage = {
-      username: "Discord Bot Test",
-      avatar_url: "https://cdn.discordapp.com/embed/avatars/0.png",
-      content: customMessage || `🔍 This is a test message from Nostr2Discord debug webhook. Timestamp: ${new Date().toISOString()}`,
-      embeds: [{
-        title: "Discord Webhook Test",
-        description: "If you can see this message, your Discord webhook is working correctly!",
-        color: 5814783, // Light blue color
-        footer: {
-          text: "Sent from Nostr2Discord Debug Function"
-        }
-      }]
-    };
-    
-    console.log(`Sending test message to Discord webhook: ${webhookUrl.substring(0, 30)}...`);
-    
+    // Only check if the webhook URL is valid without sending any message
     const response = await fetch(webhookUrl, {
-      method: 'POST',
+      method: 'HEAD',
       headers: {
         'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(testMessage),
+      }
     });
     
-    let responseText;
-    try {
-      responseText = await response.text();
-    } catch (e) {
-      responseText = "(Could not read response body)";
-    }
-    
-    if (response.ok) {
-      console.log("Discord test message sent successfully!");
+    if (response.ok || response.status === 405) {
+      // Even 405 Method Not Allowed means the URL exists
+      console.log("Discord webhook URL validation successful");
       return {
         statusCode: 200,
         headers,
         body: JSON.stringify({
           success: true,
-          message: "Discord test message sent successfully!",
+          message: "Discord webhook URL exists and is valid. No test message sent by policy.",
+          note: "Test messages are disabled by system configuration.",
           response: {
             status: response.status,
-            statusText: response.statusText,
-            body: responseText
+            statusText: response.statusText
           }
         })
       };
     } else {
-      console.error(`Failed to send Discord test message: ${response.status} ${response.statusText}`);
-      console.error(`Response body: ${responseText}`);
+      console.error(`Invalid Discord webhook URL: ${response.status} ${response.statusText}`);
       return {
         statusCode: response.status,
         headers,
@@ -165,14 +141,13 @@ async function testDiscordWebhook(headers, webhookUrl, customMessage) {
           error: `Discord API Error: ${response.status} ${response.statusText}`,
           response: {
             status: response.status,
-            statusText: response.statusText,
-            body: responseText
+            statusText: response.statusText
           }
         })
       };
     }
   } catch (error) {
-    console.error("Error sending test message:", error);
+    console.error("Error validating webhook URL:", error);
     return {
       statusCode: 500,
       headers,
