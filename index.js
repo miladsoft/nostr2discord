@@ -147,13 +147,13 @@ function formatForDiscord(event) {
 function getViewerLinks(eventId) {
   const noteId = nip19.noteEncode(eventId);
   
-  // Get preferred client from env var (primal, notes, njump, or all)
+  // Get preferred client from env var (primal, notes, nostr_at, or all)
   const preferredClient = process.env.PREFERRED_CLIENT || 'all';
   
   // Build links based on preference
   const primalLink = `https://primal.net/e/${noteId}`;
   const notesLink = `https://notes.blockcore.net/e/${eventId}`;
-  const njumpLink = `https://njump.me/${noteId}`;
+  const nostrAtLink = `https://nostr.at/${noteId}`;
   
   let linksText = '';
   let preferredLink = '';
@@ -166,13 +166,13 @@ function getViewerLinks(eventId) {
     linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
     preferredLink = notesLink;
   }
-  else if (preferredClient === 'njump') {
-    linksText = `🔗 View on njump: ${njumpLink}`;
-    preferredLink = njumpLink;
+  else if (preferredClient === 'nostr_at') {
+    linksText = `🔗 View on nostr.at: ${nostrAtLink}`;
+    preferredLink = nostrAtLink;
   }
   else {
     // Default to showing all
-    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [njump](${njumpLink})`;
+    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [nostr.at](${nostrAtLink})`;
     preferredLink = primalLink;
   }
   
@@ -344,7 +344,7 @@ async function subscribeToNostrEvents() {
     const noteId = nip19.noteEncode(event.id);
     console.log(`🔗 Primal Link: https://primal.net/e/${noteId}`);
     console.log(`🔗 Notes Link: https://notes.blockcore.net/e/${event.id}`);
-    console.log(`🔗 njump Link: https://njump.me/${noteId}`);
+    console.log(`🔗 nostr.at Link: https://nostr.at/${noteId}`);
     
     // Validate the event
     let isValid = true;

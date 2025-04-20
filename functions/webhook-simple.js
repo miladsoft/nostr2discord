@@ -68,7 +68,7 @@ function getViewerLinks(eventId) {
   
   const primalLink = `https://primal.net/e/${noteId}`;
   const notesLink = `https://notes.blockcore.net/e/${eventId}`;
-  const njumpLink = `https://njump.me/${noteId}`;
+  const nostrAtLink = `https://nostr.at/${noteId}`;
   
   let linksText = '';
   let preferredLink = '';
@@ -81,21 +81,82 @@ function getViewerLinks(eventId) {
     linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
     preferredLink = notesLink;
   }
-  else if (config.preferredClient === 'njump') {
-    linksText = `🔗 View on njump: ${njumpLink}`;
-    preferredLink = njumpLink;
+  else if (config.preferredClient === 'nostr_at') {
+    linksText = `🔗 View on nostr.at: ${nostrAtLink}`;
+    preferredLink = nostrAtLink;
   }
   else {
     // Default to showing all
-    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [njump](${njumpLink})`;
+    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [nostr.at](${nostrAtLink})`;
     preferredLink = primalLink;
   }
   
   return { linksText, preferredLink };
 }
 
-// Format Nostr content for Discord
-function formatForDiscord(event, userMetadata) {
+// Check if an event is a reply
+function isReply(event) {
+  if (!event || !event.tags) return false;
+  
+  // Look for "e" tags which reference other events (standard way to mark replies)
+  return event.tags.some(tag => tag[0] === 'e');
+}
+
+// Get the event ID that this post is replying to
+function getReplyToEventId(event) {
+  if (!event || !event.tags) return null;
+  
+  // Find the first "e" tag - this is the event being replied to
+  const eTag = event.tags.find(tag => tag[0] === 'e');
+  return eTag ? eTag[1] : null; // The second item is the event ID
+}
+
+// Get the pubkey of the original post author if available
+function getReplyToPubkey(event) {
+  if (!event || !event.tags) return null;
+  
+  // Find "p" tags which reference pubkeys
+  const pTag = event.tags.find(tag => tag[0] === 'p');
+  return pTag ? pTag[1] : null;
+}
+
+// Fetch original event details for a reply
+async function fetchOriginalEvent(eventId, relayUrls) {
+  if (!eventId) return null;
+  
+  try {
+    const pool = new SimplePool({ eoseSubTimeout: 3000 });
+    
+    // Create a subscription to find the original event
+    const sub = pool.sub(relayUrls, [{
+      ids: [eventId],
+      limit: 1
+    }]);
+    
+    return new Promise((resolve) => {
+      let timeout = setTimeout(() => {
+        sub.unsub();
+        resolve(null);
+      }, 3000);
+      
+      sub.on('event', event => {
+        clearTimeout(timeout);
+        sub.unsub();
+        resolve(event);
+      });
+      
+      sub.on('eose', () => {
+        // Keep waiting in case event comes in late
+      });
+    });
+  } catch (error) {
+    console.error('Error fetching original event:', error);
+    return null;
+  }
+}
+
+// Format Nostr content for Discord with enhanced reply support
+function formatForDiscord(event, userMetadata, originalEvent = null, originalAuthor = null) {
   let content = event.content;
   const viewerLinks = getViewerLinks(event.id);
   const timestamp = new Date(event.created_at * 1000).toISOString();
@@ -103,6 +164,7 @@ function formatForDiscord(event, userMetadata) {
   const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
   const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
   
+  // Create base embed
   const embed = {
     description: content,
     color: 3447003,
@@ -118,6 +180,29 @@ function formatForDiscord(event, userMetadata) {
     ]
   };
   
+  // Add reply context if this is a reply
+  if (isReply(event) && originalEvent) {
+    // Prepare the author name for the original post
+    const originalAuthorName = originalAuthor?.name || 
+                              originalAuthor?.display_name || 
+                              (originalEvent.pubkey ? `${originalEvent.pubkey.slice(0, 8)}...` : "Unknown User");
+    
+    // Truncate original content if too long
+    let originalContent = originalEvent.content || '';
+    if (originalContent.length > 100) {
+      originalContent = originalContent.substring(0, 97) + '...';
+    }
+    
+    // Add this as the first field for better visibility
+    embed.fields.unshift({
+      name: `💬 Reply to post by ${originalAuthorName}`,
+      value: originalContent
+    });
+    
+    // Change the embed color to distinguish replies
+    embed.color = 15105570; // Orange color
+  }
+  
   const message = {
     username: username,
     avatar_url: avatarUrl,
@@ -127,15 +212,15 @@ function formatForDiscord(event, userMetadata) {
   return message;
 }
 
-// Send event to Discord webhook
-async function sendToDiscord(event, userMetadata) {
+// Send event to Discord webhook with reply support
+async function sendToDiscord(event, userMetadata, originalEvent = null, originalAuthorMetadata = null) {
   try {
     if (isEventProcessed(event)) {
       console.log(`Event ${event.id.slice(0, 8)}... already processed, skipping`);
       return { success: true, status: 'already_processed' };
     }
     
-    const discordMessage = formatForDiscord(event, userMetadata);
+    const discordMessage = formatForDiscord(event, userMetadata, originalEvent, originalAuthorMetadata);
     
     const response = await fetch(config.discordWebhookUrl, {
       method: 'POST',
@@ -146,7 +231,7 @@ async function sendToDiscord(event, userMetadata) {
     });
     
     if (response.ok) {
-      console.log(`Successfully sent event ${event.id.slice(0, 8)}... to Discord`);
+      console.log(`Successfully sent ${isReply(event) ? 'reply' : 'event'} ${event.id.slice(0, 8)}... to Discord`);
       markEventProcessed(event.id);
       return { success: true, status: 'sent' };
     } else {
@@ -206,10 +291,31 @@ async function processNostrEvent(event) {
     return { success: false, error: 'Invalid event' };
   }
   
-  // Fetch user metadata if it's a kind 1 event (text note)
+  // Only process kind 1 events (text notes)
   if (event.kind === 1) {
+    // First fetch the user metadata
     const userMetadata = await fetchUserMetadata(event.pubkey);
-    return await sendToDiscord(event, userMetadata);
+    
+    // Check if this is a reply
+    if (isReply(event)) {
+      const replyToId = getReplyToEventId(event);
+      console.log(`Event ${event.id.slice(0, 8)}... is a reply to ${replyToId?.slice(0, 8)}...`);
+      
+      // Fetch the original post and its author's metadata
+      const originalEvent = await fetchOriginalEvent(replyToId, config.relayUrls);
+      let originalAuthorMetadata = null;
+      
+      if (originalEvent) {
+        originalAuthorMetadata = await fetchUserMetadata(originalEvent.pubkey);
+        console.log(`Found original post by ${originalEvent.pubkey.slice(0, 8)}...`);
+      }
+      
+      // Now send to Discord with the additional context
+      return await sendToDiscord(event, userMetadata, originalEvent, originalAuthorMetadata);
+    } else {
+      // Regular post (not a reply)
+      return await sendToDiscord(event, userMetadata);
+    }
   }
   
   return { success: false, error: 'Unsupported event kind' };

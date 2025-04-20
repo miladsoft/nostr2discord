@@ -10,7 +10,7 @@ This bot forwards text posts (kind 1 events) from a Nostr account to a Discord c
 - Supports multiple Nostr relays for reliable delivery
 - Discord automatically renders any media links in the posts
 - Uses the Nostr user's profile picture and name for Discord messages
-- Provides links to view posts on Nostr clients (Primal, Blockcore Notes, njump)
+- Provides links to view posts on Nostr clients (Primal, Blockcore Notes, nostr_at)
 - Configurable display options
 
 ## Configuration
@@ -19,7 +19,7 @@ In your `.env` file:
 
 ```env
 # Choose which Nostr client link(s) to include in posts
-# Options: "primal", "notes", "njump", "all"
+# Options: "primal", "notes", "nostr_at", "all"
 PREFERRED_CLIENT=all
 ```
 
@@ -38,7 +38,7 @@ The bot can generate links to different Nostr web clients:
 
 - **Primal**: Modern Nostr client with advanced features
 - **Blockcore Notes**: Clean and simple Nostr client
-- **njump**: Universal Nostr content viewer
+- **nostr_at**: Universal Nostr content viewer
 
 ## Setup
 

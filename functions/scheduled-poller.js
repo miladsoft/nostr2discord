@@ -23,8 +23,54 @@ const getConfig = () => {
   };
 };
 
-// Format content for Discord
-function formatForDiscord(event, userMetadata) {
+// Helper functions for reply detection and handling
+function isReply(event) {
+  if (!event || !event.tags) return false;
+  return event.tags.some(tag => tag[0] === 'e');
+}
+
+function getReplyToEventId(event) {
+  if (!event || !event.tags) return null;
+  const eTag = event.tags.find(tag => tag[0] === 'e');
+  return eTag ? eTag[1] : null;
+}
+
+// Fetch the original event being replied to
+async function fetchOriginalEvent(eventId, relayUrls) {
+  if (!eventId) return null;
+  
+  try {
+    const pool = new SimplePool({ eoseSubTimeout: 3000 });
+    
+    const sub = pool.sub(relayUrls, [{
+      ids: [eventId],
+      limit: 1
+    }]);
+    
+    return new Promise((resolve) => {
+      let timeout = setTimeout(() => {
+        sub.unsub();
+        resolve(null);
+      }, 3000);
+      
+      sub.on('event', event => {
+        clearTimeout(timeout);
+        sub.unsub();
+        resolve(event);
+      });
+      
+      sub.on('eose', () => {
+        // Keep waiting in case event comes late
+      });
+    });
+  } catch (error) {
+    console.error('Error fetching original event:', error);
+    return null;
+  }
+}
+
+// Format content for Discord with reply support
+function formatForDiscord(event, userMetadata, originalEvent = null, originalAuthor = null) {
   const noteId = nip19.noteEncode(event.id);
   const timestamp = new Date(event.created_at * 1000).toISOString();
   
@@ -34,7 +80,7 @@ function formatForDiscord(event, userMetadata) {
   // Get links based on configuration  
   const primalLink = `https://primal.net/e/${noteId}`;
   const notesLink = `https://notes.blockcore.net/e/${event.id}`;
-  const njumpLink = `https://njump.me/${noteId}`;
+  const nostrAtLink = `https://nostr.at/${noteId}`;
   
   // Determine which links to show based on config
   const preferredClient = process.env.PREFERRED_CLIENT || 'all';
@@ -46,17 +92,17 @@ function formatForDiscord(event, userMetadata) {
   else if (preferredClient === 'notes') {
     linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
   }
-  else if (preferredClient === 'njump') {
-    linksText = `🔗 View on njump: ${njumpLink}`;
+  else if (preferredClient === 'nostr_at') {
+    linksText = `🔗 View on nostr.at: ${nostrAtLink}`;
   }
   else {
-    linksText = `🔗 View on: [Primal](${primalLink}) | [Notes](${notesLink}) | [njump](${njumpLink})`;
+    linksText = `🔗 View on: [Primal](${primalLink}) | [Notes](${notesLink}) | [nostr.at](${nostrAtLink})`;
   }
 
   // Create Discord embed
   const embed = {
     description: event.content,
-    color: 3447003, // Blue color
+    color: isReply(event) ? 15105570 : 3447003, // Orange for replies, blue for regular posts
     timestamp: timestamp,
     footer: {
       text: `Nostr Event`
@@ -69,6 +115,25 @@ function formatForDiscord(event, userMetadata) {
     ]
   };
   
+  // Add reply context if this is a reply and we have the original post
+  if (isReply(event) && originalEvent) {
+    const originalAuthorName = originalAuthor?.name || 
+                              originalAuthor?.display_name || 
+                              (originalEvent.pubkey ? `${originalEvent.pubkey.slice(0, 8)}...` : "Unknown User");
+    
+    // Truncate original content if too long
+    let originalContent = originalEvent.content || '';
+    if (originalContent.length > 100) {
+      originalContent = originalContent.substring(0, 97) + '...';
+    }
+    
+    // Add this as the first field for better visibility
+    embed.fields.unshift({
+      name: `💬 Reply to post by ${originalAuthorName}`,
+      value: originalContent
+    });
+  }
+  
   // Create message payload
   const message = {
     username: username,
@@ -79,10 +144,28 @@ function formatForDiscord(event, userMetadata) {
   return message;
 }
 
-// Send event to Discord webhook
+// Modified function to handle replies
 async function sendToDiscord(event, userMetadata, webhookUrl) {
   try {
-    const discordMessage = formatForDiscord(event, userMetadata);
+    // Check if this is a reply and get the original post if needed
+    let originalEvent = null;
+    let originalAuthorMetadata = null;
+    
+    if (isReply(event)) {
+      const replyToId = getReplyToEventId(event);
+      console.log(`Processing reply to event ${replyToId?.slice(0, 8) || 'unknown'}`);
+      
+      const config = getConfig();
+      if (replyToId) {
+        originalEvent = await fetchOriginalEvent(replyToId, config.relayUrls);
+        
+        if (originalEvent && originalEvent.pubkey) {
+          originalAuthorMetadata = await fetchUserMetadata(originalEvent.pubkey, config.relayUrls);
+        }
+      }
+    }
+    
+    const discordMessage = formatForDiscord(event, userMetadata, originalEvent, originalAuthorMetadata);
     
     const response = await fetch(webhookUrl, {
       method: 'POST',
@@ -93,7 +176,7 @@ async function sendToDiscord(event, userMetadata, webhookUrl) {
     });
     
     if (response.ok) {
-      console.log(`Successfully sent event ${event.id.slice(0, 8)}... to Discord`);
+      console.log(`Successfully sent ${isReply(event) ? 'reply' : 'event'} ${event.id.slice(0, 8)}... to Discord`);
       return { success: true };
     } else {
       console.error(`Failed to send to Discord: ${response.status} ${response.statusText}`);
