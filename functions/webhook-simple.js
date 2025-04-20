@@ -219,37 +219,15 @@ async function testDiscordWebhook() {
       return { success: false, error: 'No Discord webhook URL configured' };
     }
     
-    const testMessage = {
-      username: "Nostr2Discord Tester",
-      avatar_url: "https://nostr.com/img/nostr-logo.png",
-      content: "🔍 This is a test message from Nostr2Discord. If you see this, the webhook is working correctly. Sent at: " + new Date().toISOString()
+    console.log(`Webhook test requested, but test messages are disabled`);
+    
+    // Return success without actually sending any Discord messages
+    return { 
+      success: true, 
+      message: 'Discord webhook validation completed without sending test messages'
     };
-    
-    console.log(`Sending test message to Discord webhook...`);
-    
-    const response = await fetch(config.discordWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(testMessage),
-    });
-    
-    if (response.ok) {
-      console.log(`✅ Test message sent successfully!`);
-      return { success: true, message: 'Test message sent successfully!' };
-    } else {
-      const errorText = await response.text();
-      console.error(`❌ Failed to send test message: ${response.status} ${response.statusText}`);
-      console.error(`Response body: ${errorText}`);
-      return { 
-        success: false, 
-        error: `Discord API error: ${response.status} ${response.statusText}`,
-        details: errorText
-      };
-    }
   } catch (error) {
-    console.error(`❌ Exception during test message:`, error);
+    console.error(`❌ Exception during webhook validation:`, error);
     return { success: false, error: error.message || 'Unknown error' };
   }
 }
