@@ -144,9 +144,14 @@ function formatForDiscord(event, userMetadata, originalEvent = null, originalAut
   return message;
 }
 
-// Modified function to handle replies
+// Modified function to handle replies with improved error handling
 async function sendToDiscord(event, userMetadata, webhookUrl) {
   try {
+    if (!webhookUrl) {
+      console.error("No Discord webhook URL provided");
+      return { success: false, error: "No Discord webhook URL provided" };
+    }
+    
     // Check if this is a reply and get the original post if needed
     let originalEvent = null;
     let originalAuthorMetadata = null;
@@ -167,30 +172,49 @@ async function sendToDiscord(event, userMetadata, webhookUrl) {
     
     const discordMessage = formatForDiscord(event, userMetadata, originalEvent, originalAuthorMetadata);
     
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(discordMessage),
-    });
+    console.log(`Sending ${isReply(event) ? 'reply' : 'post'} to Discord: ${event.id.slice(0, 8)}...`);
+    console.log(`Content preview: ${event.content.substring(0, 50)}${event.content.length > 50 ? '...' : ''}`);
     
-    if (response.ok) {
-      console.log(`Successfully sent ${isReply(event) ? 'reply' : 'event'} ${event.id.slice(0, 8)}... to Discord`);
-      return { success: true };
-    } else {
-      console.error(`Failed to send to Discord: ${response.status} ${response.statusText}`);
-      return { 
-        success: false, 
-        error: `Discord API Error: ${response.status} ${response.statusText}`
-      };
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(discordMessage),
+      });
+      
+      if (response.ok) {
+        console.log(`✅ Successfully sent ${isReply(event) ? 'reply' : 'event'} to Discord`);
+        return { success: true };
+      } else {
+        const errorText = await response.text();
+        console.error(`❌ Discord API error: ${response.status} ${response.statusText}`);
+        console.error(`Response body: ${errorText}`);
+        
+        // If rate limited, provide retryAfter information
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          return {
+            success: false,
+            error: `Discord rate limit exceeded. Retry after ${retryAfter} seconds.`,
+            retryAfter: parseInt(retryAfter || '5', 10)
+          };
+        }
+        
+        return { 
+          success: false, 
+          error: `Discord API error: ${response.status} ${response.statusText}`,
+          details: errorText
+        };
+      }
+    } catch (fetchError) {
+      console.error(`❌ Network error sending to Discord:`, fetchError);
+      return { success: false, error: fetchError.message || 'Network error' };
     }
   } catch (error) {
-    console.error('Error sending to Discord:', error);
-    return { 
-      success: false, 
-      error: error.message || 'Unknown error'
-    };
+    console.error('❌ Error in sendToDiscord:', error);
+    return { success: false, error: error.message || 'Unknown error' };
   }
 }
 
@@ -281,12 +305,21 @@ async function pollForEvents() {
   
   // Validate configuration
   if (!config.pubkey) {
+    console.error("No Nostr pubkey configured");
     return { error: "No Nostr pubkey configured" };
   }
   
   if (!config.discordWebhookUrl) {
+    console.error("No Discord webhook URL configured");
     return { error: "No Discord webhook URL configured" };
   }
+  
+  console.log(`Configuration: ${JSON.stringify({
+    pubkey: config.pubkey.slice(0, 8) + '...',
+    webhook: config.discordWebhookUrl.substring(0, 20) + '...',
+    relays: config.relayUrls,
+    preferredClient: config.preferredClient
+  }, null, 2)}`);
   
   // Convert npub to hex if needed
   let pubkey = config.pubkey;
@@ -294,7 +327,9 @@ async function pollForEvents() {
     try {
       const decoded = nip19.decode(pubkey);
       pubkey = decoded.data;
+      console.log(`Converted npub to hex: ${pubkey}`);
     } catch (error) {
+      console.error("Invalid npub format:", error);
       return { error: "Invalid npub format" };
     }
   }
@@ -307,7 +342,26 @@ async function pollForEvents() {
   
   try {
     const pool = new SimplePool({ eoseSubTimeout: 5000 });
+    
+    // Try to connect to each relay to check connectivity
+    console.log("Testing relay connections...");
+    for (const relay of config.relayUrls) {
+      try {
+        console.log(`Checking relay: ${relay}`);
+        const events = await pool.list([relay], [{
+          authors: [pubkey],
+          kinds: [0],
+          limit: 1
+        }], { timeout: 3000 });
+        
+        console.log(`Relay ${relay}: ${events.length > 0 ? 'working' : 'no data'}`);
+      } catch (error) {
+        console.error(`Relay ${relay} check failed:`, error.message || 'Unknown error');
+      }
+    }
+    
     const userMetadata = await fetchUserMetadata(pubkey, config.relayUrls);
+    console.log(`User metadata: ${JSON.stringify(userMetadata)}`);
     
     // Subscribe for events since last poll
     const filter = {
@@ -316,8 +370,32 @@ async function pollForEvents() {
       since: since,
     };
     
-    const events = await pool.list(config.relayUrls, [filter]);
+    console.log(`Using filter: ${JSON.stringify(filter)}`);
+    
+    const events = await pool.list(config.relayUrls, [filter], { timeout: 10000 });
     console.log(`Found ${events.length} events`);
+    
+    // If no events from primary relays, try fallback relays
+    if (events.length === 0) {
+      console.log("No events found with primary relays, trying fallback relays...");
+      const fallbackRelays = [
+        'wss://purplepag.es',
+        'wss://relay.nostr.band',
+        'wss://relay.snort.social'
+      ];
+      
+      const fallbackEvents = await pool.list(fallbackRelays, [filter], { timeout: 8000 });
+      console.log(`Found ${fallbackEvents.length} events from fallback relays`);
+      
+      // Add any new events from fallback relays
+      for (const event of fallbackEvents) {
+        if (!events.some(e => e.id === event.id)) {
+          events.push(event);
+        }
+      }
+      
+      console.log(`Total events after fallback: ${events.length}`);
+    }
     
     const results = [];
     let newLastSeen = since;
@@ -334,16 +412,56 @@ async function pollForEvents() {
         newLastSeen = event.created_at;
       }
       
+      console.log(`Processing event ${event.id.slice(0, 8)}... created at ${new Date(event.created_at * 1000).toISOString()}`);
+      
       // Skip if we've already processed this event
-      if (isEventProcessed(event)) {
+      if (cache.processedEvents.has(event.id)) {
         console.log(`Skipping already processed event ${event.id.slice(0, 8)}...`);
         continue;
       }
       
       // Validate event
-      if (!validateEvent(event) || !verifySignature(event)) {
-        console.log(`Skipping invalid event ${event.id.slice(0, 8)}...`);
+      try {
+        if (!validateEvent(event)) {
+          console.log(`Skipping invalid event ${event.id.slice(0, 8)}...`);
+          continue;
+        }
+        
+        if (!verifySignature(event)) {
+          console.log(`Skipping event with invalid signature ${event.id.slice(0, 8)}...`);
+          continue;
+        }
+      } catch (validationError) {
+        console.error(`Error validating event ${event.id.slice(0, 8)}:`, validationError);
         continue;
+      }
+      
+      // Test Discord webhook before sending
+      try {
+        const testResponse = await fetch(config.discordWebhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            content: `Testing webhook connectivity before sending events (${new Date().toISOString()})`
+          }),
+        });
+        
+        if (!testResponse.ok) {
+          console.error(`Discord webhook test failed: ${testResponse.status} ${testResponse.statusText}`);
+          const errorText = await testResponse.text();
+          console.error(`Response: ${errorText}`);
+          return {
+            error: `Discord webhook test failed: ${testResponse.status} ${testResponse.statusText}`,
+            details: errorText
+          };
+        } else {
+          console.log("Discord webhook test successful");
+        }
+      } catch (testError) {
+        console.error("Error testing Discord webhook:", testError);
+        return { error: `Discord webhook test error: ${testError.message}` };
       }
       
       // Send to Discord
@@ -360,6 +478,7 @@ async function pollForEvents() {
           cache.processedEvents.delete(firstItem);
         }
       } else {
+        console.error(`Failed to send event ${event.id.slice(0, 8)} to Discord:`, result.error);
         results.push({ id: event.id, status: 'failed', error: result.error });
       }
     }

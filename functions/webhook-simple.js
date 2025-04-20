@@ -212,7 +212,49 @@ function formatForDiscord(event, userMetadata, originalEvent = null, originalAut
   return message;
 }
 
-// Send event to Discord webhook with reply support
+// Test the Discord webhook connection
+async function testDiscordWebhook() {
+  try {
+    if (!config.discordWebhookUrl) {
+      return { success: false, error: 'No Discord webhook URL configured' };
+    }
+    
+    const testMessage = {
+      username: "Nostr2Discord Tester",
+      avatar_url: "https://nostr.com/img/nostr-logo.png",
+      content: "🔍 This is a test message from Nostr2Discord. If you see this, the webhook is working correctly. Sent at: " + new Date().toISOString()
+    };
+    
+    console.log(`Sending test message to Discord webhook...`);
+    
+    const response = await fetch(config.discordWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(testMessage),
+    });
+    
+    if (response.ok) {
+      console.log(`✅ Test message sent successfully!`);
+      return { success: true, message: 'Test message sent successfully!' };
+    } else {
+      const errorText = await response.text();
+      console.error(`❌ Failed to send test message: ${response.status} ${response.statusText}`);
+      console.error(`Response body: ${errorText}`);
+      return { 
+        success: false, 
+        error: `Discord API error: ${response.status} ${response.statusText}`,
+        details: errorText
+      };
+    }
+  } catch (error) {
+    console.error(`❌ Exception during test message:`, error);
+    return { success: false, error: error.message || 'Unknown error' };
+  }
+}
+
+// Improved send to Discord with better error handling
 async function sendToDiscord(event, userMetadata, originalEvent = null, originalAuthorMetadata = null) {
   try {
     if (isEventProcessed(event)) {
@@ -220,26 +262,59 @@ async function sendToDiscord(event, userMetadata, originalEvent = null, original
       return { success: true, status: 'already_processed' };
     }
     
+    if (!config.discordWebhookUrl) {
+      console.error("ERROR: Discord webhook URL is not configured properly");
+      return { success: false, error: 'No Discord webhook URL configured' };
+    }
+    
     const discordMessage = formatForDiscord(event, userMetadata, originalEvent, originalAuthorMetadata);
     
-    const response = await fetch(config.discordWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(discordMessage),
-    });
+    console.log(`Sending ${isReply(event) ? 'reply' : 'post'} to Discord: ${event.id.slice(0, 8)}...`);
+    console.log(`Content preview: ${event.content.substring(0, 50)}${event.content.length > 50 ? '...' : ''}`);
+    console.log(`Using webhook URL: ${config.discordWebhookUrl.substring(0, 30)}...`);
     
-    if (response.ok) {
-      console.log(`Successfully sent ${isReply(event) ? 'reply' : 'event'} ${event.id.slice(0, 8)}... to Discord`);
-      markEventProcessed(event.id);
-      return { success: true, status: 'sent' };
-    } else {
-      console.error(`Failed to send to Discord: ${response.statusText}`);
-      return { success: false, error: response.statusText };
+    try {
+      const response = await fetch(config.discordWebhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(discordMessage),
+      });
+      
+      const responseText = await response.text();
+      
+      if (response.ok) {
+        console.log(`✅ Successfully sent ${isReply(event) ? 'reply' : 'event'} ${event.id.slice(0, 8)}... to Discord`);
+        markEventProcessed(event.id);
+        return { success: true, status: 'sent' };
+      } else {
+        console.error(`❌ Discord API error: ${response.status} ${response.statusText}`);
+        console.error(`Response body: ${responseText}`);
+        
+        // If we got rate limited, return a special error
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after') || '5';
+          return { 
+            success: false, 
+            error: 'Discord rate limit exceeded', 
+            retryAfter: parseInt(retryAfter, 10),
+            details: responseText
+          };
+        }
+        
+        return { 
+          success: false, 
+          error: `Discord API error: ${response.status} ${response.statusText}`,
+          details: responseText
+        };
+      }
+    } catch (fetchError) {
+      console.error('❌ Network error sending to Discord:', fetchError);
+      return { success: false, error: fetchError.message || 'Network error' };
     }
   } catch (error) {
-    console.error('Error sending to Discord:', error);
+    console.error('❌ Error in sendToDiscord:', error);
     return { success: false, error: error.message || 'Unknown error' };
   }
 }
@@ -286,15 +361,24 @@ async function fetchUserMetadata(pubkey) {
 
 // Process a Nostr event
 async function processNostrEvent(event) {
+  console.log(`Processing event: ${JSON.stringify(event, null, 2)}`);
+  
   // Validate the event
-  if (!validateEvent(event) || !verifySignature(event)) {
-    return { success: false, error: 'Invalid event' };
+  if (!validateEvent(event)) {
+    console.error("Event validation failed");
+    return { success: false, error: 'Event validation failed' };
+  }
+  
+  if (!verifySignature(event)) {
+    console.error("Signature verification failed");
+    return { success: false, error: 'Signature verification failed' };
   }
   
   // Only process kind 1 events (text notes)
   if (event.kind === 1) {
     // First fetch the user metadata
     const userMetadata = await fetchUserMetadata(event.pubkey);
+    console.log(`User metadata: ${JSON.stringify(userMetadata)}`);
     
     // Check if this is a reply
     if (isReply(event)) {
@@ -316,9 +400,10 @@ async function processNostrEvent(event) {
       // Regular post (not a reply)
       return await sendToDiscord(event, userMetadata);
     }
+  } else {
+    console.log(`Skipping event with kind ${event.kind} (only kind 1 is supported)`);
+    return { success: false, error: 'Unsupported event kind' };
   }
-  
-  return { success: false, error: 'Unsupported event kind' };
 }
 
 // Update configuration
@@ -376,6 +461,20 @@ exports.handler = async function(event, context) {
   
   // GET request - return status
   if (event.httpMethod === 'GET') {
+    const params = event.queryStringParameters || {};
+    
+    // Check if this is a test request
+    if (params.action === 'test') {
+      console.log('Received test request for Discord webhook');
+      const testResult = await testDiscordWebhook();
+      return {
+        statusCode: testResult.success ? 200 : 500,
+        headers,
+        body: JSON.stringify(testResult)
+      };
+    }
+    
+    // Regular status response
     return {
       statusCode: 200,
       headers,
@@ -385,7 +484,9 @@ exports.handler = async function(event, context) {
           pubkey: config.pubkey ? (config.pubkey.slice(0, 8) + '...' + config.pubkey.slice(-8)) : 'Not set',
           relays: config.relayUrls,
           preferredClient: config.preferredClient,
-          discordWebhook: config.discordWebhookUrl ? 'Configured' : 'Not set'
+          discordWebhook: config.discordWebhookUrl ? 'Configured' : 'Not set',
+          processedEvents: config.processedEvents.size,
+          lastProcessed: new Date(config.lastProcessedTimestamp).toISOString()
         }
       })
     };
@@ -399,6 +500,7 @@ exports.handler = async function(event, context) {
       
       // If payload contains a Nostr event
       if (payload.id && payload.pubkey && payload.sig) {
+        console.log(`Processing Nostr event: ${payload.id.slice(0, 8)}...`);
         const result = await processNostrEvent(payload);
         return {
           statusCode: result.success ? 200 : 400,
@@ -423,6 +525,7 @@ exports.handler = async function(event, context) {
         body: JSON.stringify({ success: false, error: 'Invalid payload' })
       };
     } catch (error) {
+      console.error("Error processing request:", error);
       return {
         statusCode: 500,
         headers,
