@@ -6,6 +6,7 @@ const fetch = require('node-fetch');
 // In-memory cache for processed events (not persistent between function invocations)
 const processedEvents = new Set();
 let userMetadataCache = {};
+let lastProcessedTime = Date.now();
 
 // Netlify function handler
 exports.handler = async function(event, context) {
@@ -32,223 +33,221 @@ exports.handler = async function(event, context) {
       body: JSON.stringify({
         status: "active",
         message: "Nostr2Discord webhook is ready to receive events",
-        processedEvents: processedEvents.size
+        processedEvents: processedEvents.size,
+        lastProcessedTime: new Date(lastProcessedTime).toISOString()
       })
     };
   }
   
-  // Handle POST requests (Nostr events or configuration)
+  // Handle POST requests (Nostr events)
   if (event.httpMethod === 'POST') {
     try {
       const payload = JSON.parse(event.body);
       
-      // Check if this is a Nostr event
-      if (payload.id && payload.pubkey && payload.sig) {
-        return await handleNostrEvent(payload, headers);
-      } 
-      // Check if this is a configuration update
-      else if (payload.nostrPubkey || payload.discordWebhook) {
-        return handleConfigUpdate(payload, headers);
-      } 
-      // Unknown payload
-      else {
+      // Validate that this is a Nostr event
+      if (!payload.id || !payload.pubkey || !payload.content) {
         return {
           statusCode: 400,
           headers,
-          body: JSON.stringify({ 
-            success: false, 
-            error: "Invalid payload structure" 
+          body: JSON.stringify({
+            error: "Invalid Nostr event format"
           })
         };
       }
+      
+      // Check if this event has been processed already
+      if (isEventProcessed(payload)) {
+        return {
+          statusCode: 200,
+          headers,
+          body: JSON.stringify({
+            status: "skipped",
+            message: "Event already processed"
+          })
+        };
+      }
+      
+      // Validate event signature and integrity
+      if (!validateEvent(payload) || !verifySignature(payload)) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({
+            error: "Invalid event signature or structure"
+          })
+        };
+      }
+      
+      // Get Discord webhook URL from environment variable
+      const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
+      if (!discordWebhookUrl) {
+        return {
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({
+            error: "Discord webhook URL not configured"
+          })
+        };
+      }
+      
+      // Format and send the event to Discord
+      const result = await processAndSendEvent(payload, discordWebhookUrl);
+      
+      return {
+        statusCode: result.success ? 200 : 500,
+        headers,
+        body: JSON.stringify(result)
+      };
     } catch (error) {
       return {
         statusCode: 500,
         headers,
-        body: JSON.stringify({ 
-          success: false, 
-          error: error.message || "Internal server error" 
+        body: JSON.stringify({
+          error: error.message || "Unknown error"
         })
       };
     }
   }
   
-  // Unsupported method
+  // Handle unsupported methods
   return {
     statusCode: 405,
     headers,
-    body: JSON.stringify({ 
-      success: false, 
-      error: "Method not allowed" 
+    body: JSON.stringify({
+      error: "Method not allowed"
     })
   };
 };
 
-// Handle incoming Nostr events
-async function handleNostrEvent(event, headers) {
-  // Check if we've already processed this event
+// Check if an event has been processed
+function isEventProcessed(event) {
+  // Check in memory cache
   if (processedEvents.has(event.id)) {
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ 
-        success: true,
-        status: "already_processed" 
-      })
-    };
+    console.log(`[DUPLICATE] Event ${event.id.slice(0, 8)}... found in memory cache`);
+    return true;
   }
   
-  // Validate event structure and signature
+  // Verify event hash
+  const calculatedHash = getEventHash(event);
+  if (calculatedHash !== event.id) {
+    console.log(`[REJECT] Event ${event.id.slice(0, 8)}... has invalid hash`);
+    return true;
+  }
+  
+  // Time-based deduplication
+  const eventTime = event.created_at * 1000;
+  const ONE_HOUR = 60 * 60 * 1000;
+  
+  // Reject events that are too old
+  if (Date.now() - eventTime > ONE_HOUR) {
+    console.log(`[REJECT] Event ${event.id.slice(0, 8)}... is too old`);
+    return true;
+  }
+  
+  return false;
+}
+
+// Process and send event to Discord
+async function processAndSendEvent(event, webhookUrl) {
   try {
-    if (!validateEvent(event) || !verifySignature(event)) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ 
-          success: false, 
-          error: "Invalid event signature or structure" 
-        })
-      };
-    }
-  } catch (error) {
-    return {
-      statusCode: 400,
-      headers,
-      body: JSON.stringify({ 
-        success: false, 
-        error: "Event validation error: " + (error.message || "unknown error") 
-      })
-    };
-  }
-  
-  // Only process text notes (kind 1)
-  if (event.kind !== 1) {
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ 
-        success: true,
-        status: "ignored_non_text_event",
-        kind: event.kind
-      })
-    };
-  }
-  
-  // Get Discord webhook URL from environment
-  const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!discordWebhookUrl) {
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ 
-        success: false, 
-        error: "Discord webhook URL not configured" 
-      })
-    };
-  }
-  
-  try {
-    // Get user metadata if we don't already have it cached
-    if (!userMetadataCache[event.pubkey]) {
-      userMetadataCache[event.pubkey] = await fetchUserMetadata(event.pubkey);
+    // Get user metadata if available
+    let userMetadata = userMetadataCache[event.pubkey];
+    if (!userMetadata) {
+      userMetadata = await fetchUserMetadata(event.pubkey);
+      if (userMetadata) {
+        userMetadataCache[event.pubkey] = userMetadata;
+      }
     }
     
-    // Format for Discord
-    const discordPayload = formatForDiscord(event, userMetadataCache[event.pubkey]);
+    // Format the event for Discord
+    const discordMessage = formatForDiscord(event, userMetadata);
     
     // Send to Discord
-    const response = await fetch(discordWebhookUrl, {
+    const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(discordPayload),
+      body: JSON.stringify(discordMessage),
     });
     
-    if (!response.ok) {
+    if (response.ok) {
+      // Mark as processed
+      processedEvents.add(event.id);
+      lastProcessedTime = Date.now();
+      
+      // Limit cache size
+      if (processedEvents.size > 200) {
+        const iterator = processedEvents.values();
+        processedEvents.delete(iterator.next().value);
+      }
+      
       return {
-        statusCode: 500,
-        headers,
-        body: JSON.stringify({ 
-          success: false, 
-          error: `Discord API error: ${response.status} ${response.statusText}` 
-        })
+        success: true,
+        message: `Event ${event.id.slice(0, 8)}... forwarded to Discord successfully`
+      };
+    } else {
+      return {
+        success: false,
+        error: `Discord API error: ${response.status} ${response.statusText}`
       };
     }
-    
-    // Mark event as processed
-    processedEvents.add(event.id);
-    
-    // Prevent memory leaks by limiting the size of the set
-    if (processedEvents.size > 100) {
-      const firstItem = processedEvents.values().next().value;
-      processedEvents.delete(firstItem);
-    }
-    
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ 
-        success: true, 
-        status: "forwarded_to_discord" 
-      })
-    };
   } catch (error) {
     return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ 
-        success: false, 
-        error: `Error processing event: ${error.message || "Unknown error"}` 
-      })
+      success: false,
+      error: error.message || "Unknown error"
     };
   }
 }
 
-// Handle configuration updates
-function handleConfigUpdate(payload, headers) {
-  // Update configuration logic would go here
-  // For security, this should be protected with a secret token
-  
-  return {
-    statusCode: 200,
-    headers,
-    body: JSON.stringify({ 
-      success: true,
-      message: "Configuration updated" 
-    })
-  };
-}
-
 // Format Nostr content for Discord
 function formatForDiscord(event, userMetadata) {
-  // Get the username and avatar from metadata if available
+  const noteId = nip19.noteEncode(event.id);
+  const timestamp = new Date(event.created_at * 1000).toISOString();
+  
+  // Determine user info
   const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
   const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
   
-  // Get client links based on configuration
-  const viewerLinks = getViewerLinks(event.id);
+  // Get preferred client links
+  const primalLink = `https://primal.net/e/${noteId}`;
+  const notesLink = `https://notes.blockcore.net/e/${event.id}`;
+  const njumpLink = `https://njump.me/${noteId}`;
   
-  // Format as embed message
-  const timestamp = new Date(event.created_at * 1000).toISOString();
+  // Determine which links to show based on config
+  const preferredClient = process.env.PREFERRED_CLIENT || 'all';
+  let linksText = '';
+  
+  if (preferredClient === 'primal') {
+    linksText = `🔗 View on Primal: ${primalLink}`;
+  } 
+  else if (preferredClient === 'notes') {
+    linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
+  }
+  else if (preferredClient === 'njump') {
+    linksText = `🔗 View on njump: ${njumpLink}`;
+  }
+  else {
+    linksText = `🔗 View on: [Primal](${primalLink}) | [Notes](${notesLink}) | [njump](${njumpLink})`;
+  }
   
   // Create Discord embed
   const embed = {
     description: event.content,
-    color: 3447003, // Blue color
+    color: 3447003,
     timestamp: timestamp,
     footer: {
-      text: `View post in Nostr clients`
+      text: `Nostr Event ID: ${event.id.slice(0, 8)}...`
     },
     fields: [
       {
         name: "Links",
-        value: viewerLinks.linksText
+        value: linksText
       }
     ]
   };
   
-  // Send original content as embed
+  // Create message payload
   const message = {
     username: username,
     avatar_url: avatarUrl,
@@ -258,50 +257,13 @@ function formatForDiscord(event, userMetadata) {
   return message;
 }
 
-// Get viewer links based on configuration
-function getViewerLinks(eventId) {
-  const noteId = nip19.noteEncode(eventId);
-  
-  // Get preferred client from env var (primal, notes, njump, or all)
-  const preferredClient = process.env.PREFERRED_CLIENT || 'all';
-  
-  // Build links based on preference
-  const primalLink = `https://primal.net/e/${noteId}`;
-  const notesLink = `https://notes.blockcore.net/e/${eventId}`;
-  const njumpLink = `https://njump.me/${noteId}`;
-  
-  let linksText = '';
-  let preferredLink = '';
-  
-  if (preferredClient === 'primal') {
-    linksText = `🔗 View on Primal: ${primalLink}`;
-    preferredLink = primalLink;
-  } 
-  else if (preferredClient === 'notes') {
-    linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
-    preferredLink = notesLink;
-  }
-  else if (preferredClient === 'njump') {
-    linksText = `🔗 View on njump: ${njumpLink}`;
-    preferredLink = njumpLink;
-  }
-  else {
-    // Default to showing all
-    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [njump](${njumpLink})`;
-    preferredLink = primalLink;
-  }
-  
-  return { linksText, preferredLink };
-}
-
 // Fetch user metadata from Nostr
 async function fetchUserMetadata(pubkey) {
   if (!pubkey) return null;
   
-  const relayUrls = (process.env.NOSTR_RELAYS || 'wss://relay.damus.io,wss://relay.nostr.info').split(',');
-  
   try {
-    const pool = new SimplePool({ eoseSubTimeout: 5000 }); // 5 second timeout
+    const relayUrls = (process.env.NOSTR_RELAYS || 'wss://relay.damus.io,wss://relay.nostr.band').split(',');
+    const pool = new SimplePool({ eoseSubTimeout: 3000 });
     
     // Create a subscription for kind 0 (metadata) events
     const metadataSub = pool.sub(relayUrls, [{
@@ -314,7 +276,7 @@ async function fetchUserMetadata(pubkey) {
       let timeout = setTimeout(() => {
         metadataSub.unsub();
         resolve(null);
-      }, 5000);
+      }, 3000);
       
       metadataSub.on('event', event => {
         try {
@@ -328,11 +290,11 @@ async function fetchUserMetadata(pubkey) {
       });
       
       metadataSub.on('eose', () => {
-        // Keep waiting for a bit in case metadata comes in late
+        // Keep timeout running
       });
     });
   } catch (error) {
-    console.error("Error fetching user metadata:", error);
+    console.error("Error fetching metadata:", error);
     return null;
   }
 }

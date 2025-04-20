@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { SimplePool, nip19, validateEvent, verifySignature } = require('nostr-tools');
+const { SimplePool, nip19, validateEvent, verifySignature, getEventHash } = require('nostr-tools');
 const fetch = require('node-fetch');
 
 // Configuration (gets updated per request)
@@ -8,19 +8,55 @@ let config = {
   pubkey: process.env.NOSTR_PUBKEY || '',
   discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
   preferredClient: process.env.PREFERRED_CLIENT || 'all',
-  processedEvents: new Set()
+  processedEvents: new Set(),
+  lastProcessedTimestamp: Date.now()
 };
 
 // Function to check if event has been processed
-function isEventProcessed(eventId) {
-  return config.processedEvents.has(eventId);
+function isEventProcessed(event) {
+  // Check in memory cache first (fast)
+  if (config.processedEvents.has(event.id)) {
+    console.log(`[DUPLICATE] Event ${event.id.slice(0, 8)}... found in memory cache`);
+    return true;
+  }
+  
+  // Check event hash to ensure integrity
+  const calculatedHash = getEventHash(event);
+  if (calculatedHash !== event.id) {
+    console.log(`[REJECT] Event ${event.id.slice(0, 8)}... has invalid hash`);
+    return true; // Reject events with mismatched hashes
+  }
+  
+  // Time-based filtering - reject events that are older than 1 hour
+  const eventTime = event.created_at * 1000; // Convert to milliseconds
+  const ONE_HOUR = 60 * 60 * 1000;
+  
+  if (Date.now() - eventTime > ONE_HOUR) {
+    console.log(`[REJECT] Event ${event.id.slice(0, 8)}... is too old (${new Date(eventTime).toISOString()})`);
+    return true;
+  }
+  
+  // Check if this event is older than our last processed timestamp and close in time
+  // This helps after cold starts to avoid reprocessing recent events
+  const lastTime = config.lastProcessedTimestamp;
+  const FIVE_MINUTES = 5 * 60 * 1000;
+  
+  if (eventTime < lastTime && lastTime - eventTime < FIVE_MINUTES) {
+    console.log(`[DUPLICATE] Event ${event.id.slice(0, 8)}... likely processed in previous instance`);
+    markEventProcessed(event.id);
+    return true;
+  }
+  
+  return false;
 }
 
 // Function to mark event as processed
 function markEventProcessed(eventId) {
   config.processedEvents.add(eventId);
+  config.lastProcessedTimestamp = Date.now();
+  
   // Limit the size of processedEvents
-  if (config.processedEvents.size > 100) {
+  if (config.processedEvents.size > 200) {
     const iterator = config.processedEvents.values();
     config.processedEvents.delete(iterator.next().value);
   }
@@ -94,7 +130,7 @@ function formatForDiscord(event, userMetadata) {
 // Send event to Discord webhook
 async function sendToDiscord(event, userMetadata) {
   try {
-    if (isEventProcessed(event.id)) {
+    if (isEventProcessed(event)) {
       console.log(`Event ${event.id.slice(0, 8)}... already processed, skipping`);
       return { success: true, status: 'already_processed' };
     }

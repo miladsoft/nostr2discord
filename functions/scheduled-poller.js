@@ -8,7 +8,8 @@ const fetch = require('node-fetch');
 const cache = {
   lastSeen: 0,
   processedEvents: new Set(),
-  userMetadata: null
+  userMetadata: null,
+  lastRunTimestamp: 0
 };
 
 // Configuration from environment variables
@@ -158,6 +159,39 @@ async function fetchUserMetadata(pubkey, relayUrls) {
   }
 }
 
+// Check if an event has been processed already
+function isEventProcessed(event) {
+  // Check in-memory cache
+  if (cache.processedEvents.has(event.id)) {
+    return true;
+  }
+  
+  // Validate event hash as a security check
+  const calculatedHash = getEventHash(event);
+  if (calculatedHash !== event.id) {
+    console.error(`Event ${event.id.slice(0, 8)}... has invalid hash`);
+    return true; // Reject invalid events
+  }
+  
+  // If we've seen this event before (based on timestamps), reject it
+  // This helps prevent duplicate posts after cold starts
+  const lastRun = cache.lastRunTimestamp;
+  if (lastRun > 0) {
+    // If the event is older than our last run by more than 5 minutes,
+    // and it's not in our recently seen window, it's likely a duplicate
+    const eventTime = event.created_at * 1000; // Convert to milliseconds
+    const LOOKBACK_WINDOW = 5 * 60 * 1000; // 5 minutes
+    
+    if (eventTime < lastRun - LOOKBACK_WINDOW && eventTime > cache.lastSeen * 1000 - 60000) {
+      console.log(`Event ${event.id.slice(0, 8)}... is likely a duplicate (created: ${new Date(eventTime).toISOString()})`);
+      cache.processedEvents.add(event.id); // Add it to processed events
+      return true;
+    }
+  }
+  
+  return false;
+}
+
 // Poll for new events since last check
 async function pollForEvents() {
   const config = getConfig();
@@ -205,6 +239,9 @@ async function pollForEvents() {
     const results = [];
     let newLastSeen = since;
     
+    // Update the last run timestamp
+    cache.lastRunTimestamp = Date.now();
+    
     // Process events in order
     const sortedEvents = events.sort((a, b) => a.created_at - b.created_at);
     
@@ -215,7 +252,7 @@ async function pollForEvents() {
       }
       
       // Skip if we've already processed this event
-      if (cache.processedEvents.has(event.id)) {
+      if (isEventProcessed(event)) {
         console.log(`Skipping already processed event ${event.id.slice(0, 8)}...`);
         continue;
       }
@@ -235,7 +272,7 @@ async function pollForEvents() {
         results.push({ id: event.id, status: 'sent' });
         
         // Limit the size of the processed set
-        if (cache.processedEvents.size > 100) {
+        if (cache.processedEvents.size > 200) {
           const firstItem = cache.processedEvents.values().next().value;
           cache.processedEvents.delete(firstItem);
         }
@@ -250,13 +287,14 @@ async function pollForEvents() {
     return { 
       success: true, 
       processed: results.length,
-      events: results
+      events: results,
+      lastSeen: new Date(cache.lastSeen * 1000).toISOString()
     };
   } catch (error) {
     console.error("Error polling for events:", error);
     return { 
       error: error.message || "Unknown error", 
-      lastSeen: cache.lastSeen
+      lastSeen: cache.lastSeen ? new Date(cache.lastSeen * 1000).toISOString() : 'never'
     };
   }
 }
