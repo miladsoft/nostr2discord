@@ -147,33 +147,38 @@ function formatForDiscord(event) {
 function getViewerLinks(eventId) {
   const noteId = nip19.noteEncode(eventId);
   
-  // Get preferred client from env var (primal, notes, nostr_at, or all)
+  // Get preferred client from env var (nostria, primal, yakihonne, nostr_at, or all)
   const preferredClient = process.env.PREFERRED_CLIENT || 'all';
   
   // Build links based on preference
+  const nostriaLink = `https://nostria.app/e/${noteId}`;
   const primalLink = `https://primal.net/e/${noteId}`;
-  const notesLink = `https://notes.blockcore.net/e/${eventId}`;
+  const yakihonneLink = `https://yakihonne.com/article/${noteId}`;
   const nostrAtLink = `https://nostr.at/${noteId}`;
   
   let linksText = '';
   let preferredLink = '';
   
-  if (preferredClient === 'primal') {
+  if (preferredClient === 'nostria') {
+    linksText = `🔗 View on Nostria: ${nostriaLink}`;
+    preferredLink = nostriaLink;
+  } 
+  else if (preferredClient === 'primal') {
     linksText = `🔗 View on Primal: ${primalLink}`;
     preferredLink = primalLink;
-  } 
-  else if (preferredClient === 'notes') {
-    linksText = `🔗 View on Blockcore Notes: ${notesLink}`;
-    preferredLink = notesLink;
+  }
+  else if (preferredClient === 'yakihonne') {
+    linksText = `🔗 View on YakiHonne: ${yakihonneLink}`;
+    preferredLink = yakihonneLink;
   }
   else if (preferredClient === 'nostr_at') {
     linksText = `🔗 View on nostr.at: ${nostrAtLink}`;
     preferredLink = nostrAtLink;
   }
   else {
-    // Default to showing all
-    linksText = `🔗 View on: [Primal](${primalLink}) | [Blockcore Notes](${notesLink}) | [nostr.at](${nostrAtLink})`;
-    preferredLink = primalLink;
+    // Default to showing all - Nostria first as requested
+    linksText = `🔗 View on: [Nostria](${nostriaLink}) | [Primal](${primalLink}) | [YakiHonne](${yakihonneLink}) | [nostr.at](${nostrAtLink})`;
+    preferredLink = nostriaLink;
   }
   
   return { linksText, preferredLink };
@@ -345,8 +350,9 @@ async function subscribeToNostrEvents() {
     
     // Log links to different clients
     const noteId = nip19.noteEncode(event.id);
+    console.log(`🔗 Nostria Link: https://nostria.app/e/${noteId}`);
     console.log(`🔗 Primal Link: https://primal.net/e/${noteId}`);
-    console.log(`🔗 Notes Link: https://notes.blockcore.net/e/${event.id}`);
+    console.log(`🔗 YakiHonne Link: https://yakihonne.com/article/${noteId}`);
     console.log(`🔗 nostr.at Link: https://nostr.at/${noteId}`);
     
     // Validate the event
