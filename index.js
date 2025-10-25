@@ -125,14 +125,38 @@ function formatTextNote(event) {
   const content = event.content;
   const viewerLinks = getViewerLinks(event.id);
   const timestamp = new Date(event.created_at * 1000).toISOString();
-  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
-  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
+  
+  // Check if this is your post or someone replying to you
+  const isYourPost = event.pubkey === pubkey;
+  const isReplyToYou = !isYourPost && event.tags.some(tag => tag[0] === 'p' && tag[1] === pubkey);
+  
+  let username, avatarUrl, footerText, embedColor;
+  
+  if (isYourPost) {
+    // Your post
+    username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
+    avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
+    footerText = "📝 New Post";
+    embedColor = 3447003; // Blue
+  } else if (isReplyToYou) {
+    // Someone replied to you
+    username = "Reply Notification";
+    avatarUrl = "https://nostr.com/img/nostr-logo.png";
+    footerText = "💬 New Reply to Your Post";
+    embedColor = 65280; // Green
+  } else {
+    // Fallback (shouldn't happen with current filters)
+    username = "Nostr User";
+    avatarUrl = "https://nostr.com/img/nostr-logo.png";
+    footerText = "📝 Text Note";
+    embedColor = 3447003; // Blue
+  }
 
   const embed = {
-    description: content,
-    color: 3447003, // Blue
+    description: isReplyToYou ? `💬 **Reply:** ${content}` : content,
+    color: embedColor,
     timestamp: timestamp,
-    footer: { text: "📝 New Post" },
+    footer: { text: footerText },
     fields: [{ name: "Links", value: viewerLinks.linksText }]
   };
 
@@ -147,27 +171,39 @@ function formatTextNote(event) {
 function formatReaction(event) {
   const content = event.content || "👍";
   const timestamp = new Date(event.created_at * 1000).toISOString();
-  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
-  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
 
+  // Get reactor's info (who made the reaction)
+  const reactorPubkey = event.pubkey;
+  const reactorNpub = nip19.npubEncode(reactorPubkey);
+  
   // Try to find the post being reacted to
-  let reactedToPost = "Unknown post";
+  let reactedToPost = "your post";
   const eTags = event.tags.filter(tag => tag[0] === 'e');
   if (eTags.length > 0) {
     const eventId = eTags[0][1];
-    reactedToPost = `nostr:${nip19.noteEncode(eventId)}`;
+    const noteId = nip19.noteEncode(eventId);
+    let neventId;
+    try {
+      neventId = nip19.neventEncode({
+        id: eventId,
+        relays: ['wss://relay.damus.io', 'wss://relay.primal.net']
+      });
+      reactedToPost = `[your post](https://nostria.app/e/${neventId})`;
+    } catch (error) {
+      reactedToPost = `[your post](https://nostria.app/e/${noteId})`;
+    }
   }
 
   const embed = {
-    description: `Reacted with **${content}** to: ${reactedToPost}`,
+    description: `**${reactorNpub}** reacted with **${content}** to ${reactedToPost}`,
     color: 16776960, // Yellow
     timestamp: timestamp,
-    footer: { text: "⚡ Reaction" }
+    footer: { text: "⚡ New Reaction" }
   };
 
   return {
-    username: username,
-    avatar_url: avatarUrl,
+    username: "Reaction Notification",
+    avatar_url: "https://nostr.com/img/nostr-logo.png",
     embeds: [embed]
   };
 }
@@ -269,26 +305,38 @@ function formatZap(event) {
 // Format repost (kind 6)
 function formatRepost(event) {
   const timestamp = new Date(event.created_at * 1000).toISOString();
-  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
-  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
-
-  let repostedContent = "Unknown post";
+  
+  // Get reposter's info
+  const reposterPubkey = event.pubkey;
+  const reposterNpub = nip19.npubEncode(reposterPubkey);
+  
+  let repostedContent = "your post";
   const eTags = event.tags.filter(tag => tag[0] === 'e');
   if (eTags.length > 0) {
     const eventId = eTags[0][1];
-    repostedContent = `nostr:${nip19.noteEncode(eventId)}`;
+    const noteId = nip19.noteEncode(eventId);
+    let neventId;
+    try {
+      neventId = nip19.neventEncode({
+        id: eventId,
+        relays: ['wss://relay.damus.io', 'wss://relay.primal.net']
+      });
+      repostedContent = `[your post](https://nostria.app/e/${neventId})`;
+    } catch (error) {
+      repostedContent = `[your post](https://nostria.app/e/${noteId})`;
+    }
   }
 
   const embed = {
-    description: `🔄 Reposted: ${repostedContent}`,
+    description: `🔄 **${reposterNpub}** reposted ${repostedContent}`,
     color: 3066993, // Green
     timestamp: timestamp,
-    footer: { text: "🔄 Repost" }
+    footer: { text: "🔄 New Repost" }
   };
 
   return {
-    username: username,
-    avatar_url: avatarUrl,
+    username: "Repost Notification",
+    avatar_url: "https://nostr.com/img/nostr-logo.png",
     embeds: [embed]
   };
 }
@@ -515,25 +563,51 @@ async function subscribeToNostrEvents() {
   logDebug("Setting up subscription filter");
   
   // Subscribe to configured event types
-  // For text notes: from your pubkey
-  // For zaps: to your pubkey (using #p tag)
   const filters = [];
+  const sinceTime = Math.floor(Date.now() / 1000);
   
-  // Text notes from your pubkey
+  // 1. Text notes FROM your pubkey (your posts)
   if (monitoredEventKinds.includes(1)) {
     filters.push({
       authors: [pubkey],
       kinds: [1],
-      since: Math.floor(Date.now() / 1000)
+      since: sinceTime
     });
   }
   
-  // Zaps sent to your pubkey
+  // 2. Replies TO your posts (kind 1 with #p tag mentioning you)
+  if (monitoredEventKinds.includes(1)) {
+    filters.push({
+      kinds: [1],
+      "#p": [pubkey],
+      since: sinceTime
+    });
+  }
+  
+  // 3. Reactions TO your posts (kind 7 with #p tag)
+  if (monitoredEventKinds.includes(7)) {
+    filters.push({
+      kinds: [7],
+      "#p": [pubkey],
+      since: sinceTime
+    });
+  }
+  
+  // 4. Reposts OF your posts (kind 6 with #p tag)
+  if (monitoredEventKinds.includes(6)) {
+    filters.push({
+      kinds: [6],
+      "#p": [pubkey],
+      since: sinceTime
+    });
+  }
+  
+  // 5. Zaps sent TO you (kind 9735 with #p tag)
   if (monitoredEventKinds.includes(9735)) {
     filters.push({
       kinds: [9735],
       "#p": [pubkey],
-      since: Math.floor(Date.now() / 1000)
+      since: sinceTime
     });
   }
   
