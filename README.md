@@ -1,49 +1,52 @@
 # Nostr2Discord Bot
 
-This bot forwards text posts (kind 1 events) from a Nostr account to a Discord channel via webhooks.
+Forwards Nostr posts to Discord automatically.
 
-## Features
+## Quick Setup
 
-- Monitors a specified Nostr public key for new posts
-- Forwards posts to Discord via webhook as beautiful embeds
-- Posts are sent exactly as they appear in Nostr, with no content modifications
-- Supports multiple Nostr relays for reliable delivery
-- Discord automatically renders any media links in the posts
-- Uses the Nostr user's profile picture and name for Discord messages
-- Provides links to view posts on Nostr clients (Primal, Blockcore Notes, nostr_at)
-- Configurable display options
-
-## Configuration
-
-In your `.env` file:
-
-```env
-# Choose which Nostr client link(s) to include in posts
-# Options: "primal", "notes", "nostr_at", "all"
-PREFERRED_CLIENT=all
+1. **Create config file:**
+```bash
+cp .env.example .env
 ```
 
-## Message Format
+2. **Configure settings:**
+```env
+NOSTR_PUBKEY=your_npub_or_hex_pubkey
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
 
-Posts are sent as Discord embeds:
-- Original post content is preserved in the embed description
-- Discord automatically renders any media links in the embed
-- Nostr client links are added in the embed fields
-- Messages appear with the Nostr user's profile picture and name
-- Timestamp is included in the embed
+3. **Run:**
+```bash
+docker-compose up -d
+```
 
-## Nostr Clients
+4. **View logs:**
+```bash
+docker-compose logs -f nostr2discord
+```
 
-The bot can generate links to different Nostr web clients:
+## Stop
 
-- **Primal**: Modern Nostr client with advanced features
-- **Blockcore Notes**: Clean and simple Nostr client
-- **nostr_at**: Universal Nostr content viewer
+```bash
+docker-compose down
+```
 
-## Setup
+## Environment Settings
 
-1. Create a Discord webhook in your server's channel settings
-2. Set your Nostr public key in the `.env` file (hex or npub format)
-3. Configure any display preferences in the `.env` file
-4. Run the bot with `npm start`
+```env
+# Nostr public key (npub or hex format)
+NOSTR_PUBKEY=npub1...
+
+# Discord webhook URL
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+
+# Nostr relays (optional)
+NOSTR_RELAYS=wss://relay.damus.io,wss://relay.primal.net
+
+# Additional settings
+CHECK_INTERVAL_MS=30000
+DEBUG=false
+```
+
+Every new Nostr post is instantly sent to Discord!
 

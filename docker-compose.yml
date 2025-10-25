@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  nostr2discord:
+    build: .
+    container_name: nostr2discord
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      # Copy these from your .env file or set them here
+      - NOSTR_PUBKEY=${NOSTR_PUBKEY}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - NOSTR_RELAYS=${NOSTR_RELAYS}
+      - CHECK_INTERVAL_MS=${CHECK_INTERVAL_MS:-30000}
+      - DEBUG=${DEBUG:-false}
+    env_file:
+      - .env  # Make sure to create this file with your environment variables
+    # Uncomment the next lines if you want to expose a port for health checks
+    # ports:
+    #   - "3000:3000"
+    # Add volumes if you want to persist logs
+    # volumes:
+    #   - ./logs:/app/logs
