@@ -175,6 +175,8 @@ function formatReaction(event) {
 // Format zap (kind 9735)
 function formatZap(event) {
   const timestamp = new Date(event.created_at * 1000).toISOString();
+  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
+  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
 
   // Extract zap amount and sender/recipient info
   let zapAmount = "Unknown amount";
@@ -183,34 +185,56 @@ function formatZap(event) {
   let zapSenderAvatar = "https://nostr.com/img/nostr-logo.png";
 
   try {
-    // Parse bolt11 invoice to get amount (more comprehensive)
-    const bolt11Tag = event.tags.find(tag => tag[0] === 'bolt11');
-    if (bolt11Tag && bolt11Tag[1]) {
-      // Extract amount from bolt11 invoice
-      const invoice = bolt11Tag[1];
-      
-      // Look for amount in different formats
-      const amountMatch = invoice.match(/lnbc(\d+)([munp]?)/) || 
-                         invoice.match(/(\d+)m?sats?$/i) ||
-                         invoice.match(/(\d+)$/);
-      
-      if (amountMatch) {
-        let amount = parseInt(amountMatch[1]);
-        const unit = amountMatch[2] || '';
+    // First try to get amount from zap request (most reliable)
+    const zapRequestTag = event.tags.find(tag => tag[0] === 'description');
+    if (zapRequestTag && zapRequestTag[1]) {
+      try {
+        const zapRequest = JSON.parse(zapRequestTag[1]);
         
-        // Convert to sats based on unit
-        switch(unit) {
-          case 'm': amount = amount / 1000; break;
-          case 'u': amount = amount / 1000000; break;
-          case 'n': amount = amount / 1000000000; break;
+        // Look for amount tag in zap request
+        if (zapRequest.tags) {
+          const amountTag = zapRequest.tags.find(tag => tag[0] === 'amount');
+          if (amountTag && amountTag[1]) {
+            const millisats = parseInt(amountTag[1]);
+            const sats = Math.floor(millisats / 1000);
+            zapAmount = `${sats} sats`;
+          }
         }
-        
-        zapAmount = `${Math.floor(amount)} sats`;
+      } catch (e) {
+        console.log("Could not parse zap request for amount");
       }
     }
 
-    // Get zap request to find sender info and note
-    const zapRequestTag = event.tags.find(tag => tag[0] === 'description');
+    // Fallback: Parse bolt11 invoice if amount not found in zap request
+    if (zapAmount === "Unknown amount") {
+      const bolt11Tag = event.tags.find(tag => tag[0] === 'bolt11');
+      if (bolt11Tag && bolt11Tag[1]) {
+        const invoice = bolt11Tag[1];
+        
+        // Better bolt11 parsing - look for amount in millisatoshis
+        const amountMatch = invoice.match(/lnbc(\d+)([munp]?)/);
+        if (amountMatch) {
+          let amount = parseInt(amountMatch[1]);
+          const unit = amountMatch[2] || '';
+          
+          // Convert to millisatoshis based on unit
+          switch(unit) {
+            case 'm': amount = amount * 100000000; break; // mBTC
+            case 'u': amount = amount * 100000; break;    // μBTC  
+            case 'n': amount = amount * 100; break;       // nBTC
+            case 'p': amount = amount * 0.1; break;       // pBTC
+            default: amount = amount; break;              // millisats
+          }
+          
+          const sats = Math.floor(amount / 1000);
+          if (sats > 0) {
+            zapAmount = `${sats} sats`;
+          }
+        }
+      }
+    }
+
+    // Parse zap request for sender info and note (if not already parsed above)
     if (zapRequestTag && zapRequestTag[1]) {
       try {
         const zapRequest = JSON.parse(zapRequestTag[1]);
@@ -221,7 +245,7 @@ function formatZap(event) {
           zapSender = nip19.npubEncode(zapRequest.pubkey);
         }
       } catch (e) {
-        console.error("Error parsing zap request:", e);
+        console.error("Error parsing zap request for sender info:", e);
       }
     }
   } catch (error) {

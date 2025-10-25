@@ -13,6 +13,8 @@ services:
       - NOSTR_RELAYS=${NOSTR_RELAYS}
       - CHECK_INTERVAL_MS=${CHECK_INTERVAL_MS:-30000}
       - DEBUG=${DEBUG:-false}
+      - MONITORED_EVENT_KINDS=${MONITORED_EVENT_KINDS:-1,9735,6}
+      - PREFERRED_CLIENT=${PREFERRED_CLIENT:-all}
     env_file:
       - .env  # Make sure to create this file with your environment variables
     # Uncomment the next lines if you want to expose a port for health checks
