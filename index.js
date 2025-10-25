@@ -25,6 +25,7 @@ let pubkey = process.env.NOSTR_PUBKEY;
 const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
 const checkIntervalMs = parseInt(process.env.CHECK_INTERVAL_MS || '30000');
 const debug = process.env.DEBUG === 'true';
+const monitoredEventKinds = (process.env.MONITORED_EVENT_KINDS || '1').split(',').map(k => parseInt(k.trim()));
 
 // Convert npub to hex if needed
 if (pubkey && pubkey.startsWith('npub')) {
@@ -41,6 +42,7 @@ console.log("=== NOSTR2DISCORD BOT STARTING ===");
 console.log(`Configured with pubkey: ${pubkey ? pubkey : 'NOT SET'}`);
 console.log(`Discord webhook: ${discordWebhookUrl ? 'CONFIGURED' : 'NOT SET'}`);
 console.log(`Connecting to relays: ${relayUrls.join(', ')}`);
+console.log(`Monitoring event kinds: ${monitoredEventKinds.join(', ')} (1=text, 7=reaction, 9735=zap, 6=repost)`);
 console.log(`Debug mode: ${debug ? 'ON' : 'OFF'}`);
 
 // Initialize a relay pool with longer timeout
@@ -102,56 +104,217 @@ async function fetchUserMetadata() {
   }
 }
 
-// Format Nostr content for Discord
-function formatForDiscord(event) {
-  // Use the original content without modifications
-  let content = event.content;
-  
-  // Get client links based on configuration
+// Format different event types for Discord
+function formatEventForDiscord(event) {
+  switch (event.kind) {
+    case 1:
+      return formatTextNote(event);
+    case 7:
+      return formatReaction(event);
+    case 9735:
+      return formatZap(event);
+    case 6:
+      return formatRepost(event);
+    default:
+      return formatGenericEvent(event);
+  }
+}
+
+// Format text note (kind 1)
+function formatTextNote(event) {
+  const content = event.content;
   const viewerLinks = getViewerLinks(event.id);
-  
-  // Format as embed message
   const timestamp = new Date(event.created_at * 1000).toISOString();
-  
-  // Get the username and avatar from metadata if available
   const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
   const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
-  
-  // Create Discord embed
+
   const embed = {
     description: content,
-    color: 3447003, // Blue color
+    color: 3447003, // Blue
     timestamp: timestamp,
-    footer: {
-      text: `View post in Nostr clients`
-    },
-    fields: [
-      {
-        name: "Links",
-        value: viewerLinks.linksText
-      }
-    ]
+    footer: { text: "📝 New Post" },
+    fields: [{ name: "Links", value: viewerLinks.linksText }]
   };
-  
-  // Send original content as embed
-  const message = {
+
+  return {
     username: username,
     avatar_url: avatarUrl,
     embeds: [embed]
   };
-  
-  return message;
+}
+
+// Format reaction (kind 7)
+function formatReaction(event) {
+  const content = event.content || "👍";
+  const timestamp = new Date(event.created_at * 1000).toISOString();
+  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
+  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
+
+  // Try to find the post being reacted to
+  let reactedToPost = "Unknown post";
+  const eTags = event.tags.filter(tag => tag[0] === 'e');
+  if (eTags.length > 0) {
+    const eventId = eTags[0][1];
+    reactedToPost = `nostr:${nip19.noteEncode(eventId)}`;
+  }
+
+  const embed = {
+    description: `Reacted with **${content}** to: ${reactedToPost}`,
+    color: 16776960, // Yellow
+    timestamp: timestamp,
+    footer: { text: "⚡ Reaction" }
+  };
+
+  return {
+    username: username,
+    avatar_url: avatarUrl,
+    embeds: [embed]
+  };
+}
+
+// Format zap (kind 9735)
+function formatZap(event) {
+  const timestamp = new Date(event.created_at * 1000).toISOString();
+
+  // Extract zap amount and sender/recipient info
+  let zapAmount = "Unknown amount";
+  let zapSender = "Anonymous";
+  let zapNote = "";
+  let zapSenderAvatar = "https://nostr.com/img/nostr-logo.png";
+
+  try {
+    // Parse bolt11 invoice to get amount (more comprehensive)
+    const bolt11Tag = event.tags.find(tag => tag[0] === 'bolt11');
+    if (bolt11Tag && bolt11Tag[1]) {
+      // Extract amount from bolt11 invoice
+      const invoice = bolt11Tag[1];
+      
+      // Look for amount in different formats
+      const amountMatch = invoice.match(/lnbc(\d+)([munp]?)/) || 
+                         invoice.match(/(\d+)m?sats?$/i) ||
+                         invoice.match(/(\d+)$/);
+      
+      if (amountMatch) {
+        let amount = parseInt(amountMatch[1]);
+        const unit = amountMatch[2] || '';
+        
+        // Convert to sats based on unit
+        switch(unit) {
+          case 'm': amount = amount / 1000; break;
+          case 'u': amount = amount / 1000000; break;
+          case 'n': amount = amount / 1000000000; break;
+        }
+        
+        zapAmount = `${Math.floor(amount)} sats`;
+      }
+    }
+
+    // Get zap request to find sender info and note
+    const zapRequestTag = event.tags.find(tag => tag[0] === 'description');
+    if (zapRequestTag && zapRequestTag[1]) {
+      try {
+        const zapRequest = JSON.parse(zapRequestTag[1]);
+        zapNote = zapRequest.content || "";
+        
+        // Get sender pubkey from zap request
+        if (zapRequest.pubkey) {
+          zapSender = nip19.npubEncode(zapRequest.pubkey);
+        }
+      } catch (e) {
+        console.error("Error parsing zap request:", e);
+      }
+    }
+  } catch (error) {
+    console.error("Error parsing zap event:", error);
+  }
+
+  const embed = {
+    description: `⚡ **${zapAmount}** received from ${zapSender}${zapNote ? `\n\n💬 "${zapNote}"` : ''}`,
+    color: 16753920, // Orange
+    timestamp: timestamp,
+    footer: { text: "⚡ Zap Sent" }
+  };
+
+  return {
+    username: username,
+    avatar_url: avatarUrl,
+    embeds: [embed]
+  };
+}
+
+// Format repost (kind 6)
+function formatRepost(event) {
+  const timestamp = new Date(event.created_at * 1000).toISOString();
+  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
+  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
+
+  let repostedContent = "Unknown post";
+  const eTags = event.tags.filter(tag => tag[0] === 'e');
+  if (eTags.length > 0) {
+    const eventId = eTags[0][1];
+    repostedContent = `nostr:${nip19.noteEncode(eventId)}`;
+  }
+
+  const embed = {
+    description: `🔄 Reposted: ${repostedContent}`,
+    color: 3066993, // Green
+    timestamp: timestamp,
+    footer: { text: "🔄 Repost" }
+  };
+
+  return {
+    username: username,
+    avatar_url: avatarUrl,
+    embeds: [embed]
+  };
+}
+
+// Format generic event
+function formatGenericEvent(event) {
+  const timestamp = new Date(event.created_at * 1000).toISOString();
+  const username = userMetadata?.name || userMetadata?.display_name || "Nostr User";
+  const avatarUrl = userMetadata?.picture || "https://nostr.com/img/nostr-logo.png";
+
+  const embed = {
+    description: `Event kind ${event.kind}: ${event.content?.substring(0, 200) || 'No content'}`,
+    color: 9936031, // Purple
+    timestamp: timestamp,
+    footer: { text: `📊 Event Kind ${event.kind}` }
+  };
+
+  return {
+    username: username,
+    avatar_url: avatarUrl,
+    embeds: [embed]
+  };
+}
+
+// Legacy function for backward compatibility  
+function formatForDiscord(event) {
+  return formatEventForDiscord(event);
 }
 
 // Get viewer links based on configuration
 function getViewerLinks(eventId) {
   const noteId = nip19.noteEncode(eventId);
   
+  // Create nevent for Nostria (includes event id + relays for better compatibility)
+  let neventId;
+  try {
+    neventId = nip19.neventEncode({
+      id: eventId,
+      relays: ['wss://relay.damus.io', 'wss://relay.primal.net']
+    });
+  } catch (error) {
+    console.error('Error creating nevent:', error);
+    neventId = noteId; // fallback to note format
+  }
+  
   // Get preferred client from env var (nostria, primal, yakihonne, nostr_at, or all)
   const preferredClient = process.env.PREFERRED_CLIENT || 'all';
   
   // Build links based on preference
-  const nostriaLink = `https://nostria.app/e/${noteId}`;
+  const nostriaLink = `https://nostria.app/e/${neventId}`;
   const primalLink = `https://primal.net/e/${noteId}`;
   const yakihonneLink = `https://yakihonne.com/article/${noteId}`;
   const nostrAtLink = `https://nostr.at/${noteId}`;
@@ -327,17 +490,32 @@ async function subscribeToNostrEvents() {
   
   logDebug("Setting up subscription filter");
   
-  // Subscribe to kind 1 (text note) events from the specified pubkey
-  // Using a more comprehensive filter
-  const filter = {
-    authors: [pubkey],
-    kinds: [1],
-    since: Math.floor(Date.now() / 1000) // Only get events from now
-  };
+  // Subscribe to configured event types
+  // For text notes: from your pubkey
+  // For zaps: to your pubkey (using #p tag)
+  const filters = [];
   
-  logDebug(`Subscription filter: ${JSON.stringify(filter)}`);
+  // Text notes from your pubkey
+  if (monitoredEventKinds.includes(1)) {
+    filters.push({
+      authors: [pubkey],
+      kinds: [1],
+      since: Math.floor(Date.now() / 1000)
+    });
+  }
   
-  const sub = pool.sub(relayUrls, [filter]);
+  // Zaps sent to your pubkey
+  if (monitoredEventKinds.includes(9735)) {
+    filters.push({
+      kinds: [9735],
+      "#p": [pubkey],
+      since: Math.floor(Date.now() / 1000)
+    });
+  }
+  
+  logDebug(`Subscription filters: ${JSON.stringify(filters)}`);
+  
+  const sub = pool.sub(relayUrls, filters);
   
   console.log("Waiting for new events...");
   
@@ -345,12 +523,32 @@ async function subscribeToNostrEvents() {
   
   sub.on('event', event => {
     receivedEventCount++;
-    console.log(`📥 Received event ${receivedEventCount}: ${event.id}`);
-    console.log(`📝 Content: ${event.content}`);
+    console.log(`📥 Received event ${receivedEventCount} (kind ${event.kind}): ${event.id}`);
+    
+    // Log event type and content
+    const eventTypeNames = {
+      1: 'Text Note',
+      7: 'Reaction', 
+      9735: 'Zap',
+      6: 'Repost'
+    };
+    const eventTypeName = eventTypeNames[event.kind] || `Unknown (${event.kind})`;
+    console.log(`📝 Event Type: ${eventTypeName}`);
+    console.log(`📝 Content: ${event.content?.substring(0, 100) || 'No content'}${event.content?.length > 100 ? '...' : ''}`);
     
     // Log links to different clients
     const noteId = nip19.noteEncode(event.id);
-    console.log(`🔗 Nostria Link: https://nostria.app/e/${noteId}`);
+    let neventId;
+    try {
+      neventId = nip19.neventEncode({
+        id: event.id,
+        relays: ['wss://relay.damus.io', 'wss://relay.primal.net']
+      });
+    } catch (error) {
+      console.error('Error creating nevent for logs:', error);
+      neventId = noteId; // fallback
+    }
+    console.log(`🔗 Nostria Link: https://nostria.app/e/${neventId}`);
     console.log(`🔗 Primal Link: https://primal.net/e/${noteId}`);
     console.log(`🔗 YakiHonne Link: https://yakihonne.com/article/${noteId}`);
     console.log(`🔗 nostr.at Link: https://nostr.at/${noteId}`);
