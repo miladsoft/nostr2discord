@@ -382,12 +382,11 @@ function getViewerLinks(eventId) {
     neventId = noteId; // fallback to note format
   }
   
-  // Get preferred client from env var (nostria, primal, yakihonne, nostr_at, or all)
+  // Get preferred client from env var (nostria, yakihonne, nostr_at, or all)
   const preferredClient = process.env.PREFERRED_CLIENT || 'all';
   
   // Build links based on preference
   const nostriaLink = `https://nostria.app/e/${neventId}`;
-  const primalLink = `https://primal.net/e/${noteId}`;
   const yakihonneLink = `https://yakihonne.com/article/${noteId}`;
   const nostrAtLink = `https://nostr.at/${noteId}`;
   
@@ -398,10 +397,6 @@ function getViewerLinks(eventId) {
     linksText = `🔗 View on Nostria: ${nostriaLink}`;
     preferredLink = nostriaLink;
   } 
-  else if (preferredClient === 'primal') {
-    linksText = `🔗 View on Primal: ${primalLink}`;
-    preferredLink = primalLink;
-  }
   else if (preferredClient === 'yakihonne') {
     linksText = `🔗 View on YakiHonne: ${yakihonneLink}`;
     preferredLink = yakihonneLink;
@@ -412,7 +407,7 @@ function getViewerLinks(eventId) {
   }
   else {
     // Default to showing all - Nostria first as requested
-    linksText = `🔗 View on: [Nostria](${nostriaLink}) | [Primal](${primalLink}) | [YakiHonne](${yakihonneLink}) | [nostr.at](${nostrAtLink})`;
+    linksText = `🔗 View on: [Nostria](${nostriaLink}) | [YakiHonne](${yakihonneLink}) | [nostr.at](${nostrAtLink})`;
     preferredLink = nostriaLink;
   }
   
@@ -647,7 +642,6 @@ async function subscribeToNostrEvents() {
       neventId = noteId; // fallback
     }
     console.log(`🔗 Nostria Link: https://nostria.app/e/${neventId}`);
-    console.log(`🔗 Primal Link: https://primal.net/e/${noteId}`);
     console.log(`🔗 YakiHonne Link: https://yakihonne.com/article/${noteId}`);
     console.log(`🔗 nostr.at Link: https://nostr.at/${noteId}`);
     
